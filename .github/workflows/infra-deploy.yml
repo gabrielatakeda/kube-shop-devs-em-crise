@@ -107,8 +107,14 @@ jobs:
           done
           [[ -n "$IN_SSH_CIDR" ]] || { echo "::error::informe ssh_allowed_cidr ou a variável SSH_ALLOWED_CIDR"; exit 1; }
           [[ -n "$SSH_PUBLIC_KEY" ]] || { echo "::error::secret SSH_PUBLIC_KEY não configurado"; exit 1; }
-          [[ -n "${{ secrets.AWS_ACCESS_KEY_ID }}" && -n "${{ vars.TF_STATE_BUCKET }}" ]] \
-            || { echo "::error::secret AWS_ACCESS_KEY_ID e variável TF_STATE_BUCKET são obrigatórios"; exit 1; }
+          faltando=0
+          [[ -n "${{ secrets.AWS_ACCESS_KEY_ID }}" ]] \
+            || { echo "::error::secret AWS_ACCESS_KEY_ID vazio (cadastre na aba Secrets)"; faltando=1; }
+          [[ -n "${{ secrets.AWS_SECRET_ACCESS_KEY }}" ]] \
+            || { echo "::error::secret AWS_SECRET_ACCESS_KEY vazio (cadastre na aba Secrets)"; faltando=1; }
+          [[ -n "${{ vars.TF_STATE_BUCKET }}" ]] \
+            || { echo "::error::variável TF_STATE_BUCKET vazia (cadastre na aba Variables, não em Secrets)"; faltando=1; }
+          (( faltando == 0 )) || exit 1
 
       - name: Gera variáveis do Terraform a partir dos parâmetros
         run: |

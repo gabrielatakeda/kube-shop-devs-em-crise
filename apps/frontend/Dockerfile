@@ -8,6 +8,8 @@ COPY apps/frontend apps/frontend
 RUN npm run build --workspace apps/frontend
 
 FROM nginx:1.28.0-alpine AS runtime
+# Atualiza bibliotecas do Alpine com CVE crítica corrigida (openssl, brotli).
+RUN apk upgrade --no-cache
 COPY apps/frontend/nginx.conf /etc/nginx/nginx.conf
 COPY --from=build /app/apps/frontend/dist /usr/share/nginx/html
 USER 101:101
