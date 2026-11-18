@@ -1,0 +1,224 @@
+# Rotinas de operação do KubeShop para a equipe do cliente (escopo §9 e §10).
+#
+#   health        consulta de saúde (contêineres, readiness com banco, disco, versão)
+#   logs          últimas N linhas de log de cada serviço -> artefato
+#   restart       reinicia um serviço (ou todos) e aguarda os healthchecks
+#   backup        executa o backup agora e confere o objeto no S3 (D6)
+#   restore-test  restaura o último backup em um MongoDB descartável NO RUNNER,
+#                 sem tocar no ambiente principal (escopo ACE-07)
+#   reset-demo    DESTRUTIVA: faz backup e limpa os pedidos de demonstração
+#                 (exige confirm = LIMPAR-<environment>)
+#
+# Acesso às VMs: somente pelo bastion, com regra SSH temporária para o runner.
+name: ops
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Ambiente
+        type: choice
+        options: [dev, homolog, prod]
+        default: dev
+      operation:
+        description: Rotina
+        type: choice
+        options: [health, logs, restart, backup, restore-test, reset-demo]
+        default: health
+      service:
+        description: Serviço (logs/restart)
+        type: choice
+        options: [all, proxy, frontend, api, mongodb]
+        default: all
+      log_lines:
+        description: Linhas de log por serviço
+        type: string
+        default: "200"
+      confirm:
+        description: "Somente para reset-demo: digite LIMPAR-<environment>"
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: infra-${{ inputs.environment }}
+  cancel-in-progress: false
+
+env:
+  TERRAFORM_VERSION: "1.17.0"
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-2' }}
+  MONGO_IMAGE: mongo:8.0.17
+  IN_ENVIRONMENT: ${{ inputs.environment }}
+  IN_OPERATION: ${{ inputs.operation }}
+  IN_SERVICE: ${{ inputs.service }}
+  IN_LOG_LINES: ${{ inputs.log_lines }}
+  IN_CONFIRM: ${{ inputs.confirm }}
+
+jobs:
+  ops:
+    name: ${{ inputs.operation }} · ${{ inputs.environment }}
+    runs-on: ubuntu-24.04
+    environment: ${{ inputs.environment }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Valida parâmetros
+        run: |
+          set -euo pipefail
+          [[ "$IN_LOG_LINES" =~ ^[0-9]{1,4}$ ]] || { echo "::error::log_lines deve ser um número de 1 a 5000"; exit 1; }
+          if [[ "$IN_OPERATION" == "reset-demo" && "$IN_CONFIRM" != "LIMPAR-${IN_ENVIRONMENT}" ]]; then
+            echo "::error::reset-demo apaga os pedidos. Digite confirm = LIMPAR-${IN_ENVIRONMENT}"; exit 1
+          fi
+          mkdir -p reports
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      # Somente leitura do state: nenhuma alteração de infraestrutura nesta pipeline.
+      - name: Lê os outputs do ambiente
+        working-directory: infra
+        run: |
+          set -euo pipefail
+          terraform init -input=false \
+            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
+            -backend-config="key=kubeshop/${IN_ENVIRONMENT}/terraform.tfstate" \
+            -backend-config="region=${AWS_REGION}" >/dev/null
+          terraform output -json > ../tf-outputs.json
+          jq -e '.bastion_public_ip.value' ../tf-outputs.json >/dev/null \
+            || { echo "::error::ambiente ${IN_ENVIRONMENT} não está implantado"; exit 1; }
+
+      # ------------------------------------------------------------ rotinas nas VMs
+      - name: Instala Ansible e coleções
+        if: inputs.operation != 'restore-test'
+        working-directory: ansible
+        run: |
+          set -euo pipefail
+          pip install --quiet "ansible-core>=2.18,<2.20"
+          ansible-galaxy collection install -r requirements.yml >/dev/null
+          bash inventory/gerar-inventario.sh ../tf-outputs.json "$AWS_REGION"
+
+      - name: Carrega a chave SSH do grupo no agente
+        if: inputs.operation != 'restore-test'
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Libera SSH temporário no bastion para o runner
+        id: sshrule
+        if: inputs.operation != 'restore-test'
+        run: |
+          set -euo pipefail
+          RUNNER_IP="$(curl -sSf https://checkip.amazonaws.com | tr -d '[:space:]')"
+          SG_ID="$(jq -r .bastion_security_group_id.value tf-outputs.json)"
+          RULE_ID="$(aws ec2 authorize-security-group-ingress \
+            --group-id "$SG_ID" \
+            --ip-permissions "IpProtocol=tcp,FromPort=22,ToPort=22,IpRanges=[{CidrIp=${RUNNER_IP}/32,Description=pipeline-temporario-${GITHUB_RUN_ID}}]" \
+            --tag-specifications "ResourceType=security-group-rule,Tags=[{Key=temporario,Value=pipeline},{Key=run,Value=${GITHUB_RUN_ID}}]" \
+            --query 'SecurityGroupRules[0].SecurityGroupRuleId' --output text)"
+          echo "sg_id=$SG_ID" >> "$GITHUB_OUTPUT"
+          echo "rule_id=$RULE_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Executa a rotina
+        if: inputs.operation != 'restore-test'
+        working-directory: ansible
+        run: |
+          set -euo pipefail
+          ansible-playbook ops.yml \
+            -e "operation=${IN_OPERATION}" -e "service=${IN_SERVICE}" -e "log_lines=${IN_LOG_LINES}" \
+            2>&1 | tee "../reports/ops-${IN_OPERATION}.log"
+
+      - name: Remove o SSH temporário
+        if: always() && steps.sshrule.outputs.rule_id != ''
+        run: |
+          aws ec2 revoke-security-group-ingress \
+            --group-id "${{ steps.sshrule.outputs.sg_id }}" \
+            --security-group-rule-ids "${{ steps.sshrule.outputs.rule_id }}"
+
+      # ------------------------------------------------------------ backup: conferência
+      - name: Confere o backup no S3 (criptografia e expiração)
+        if: inputs.operation == 'backup' || inputs.operation == 'reset-demo'
+        run: |
+          set -euo pipefail
+          BUCKET="$(jq -r .backup_bucket.value tf-outputs.json)"
+          KEY="$(tr -d '[:space:]' < reports/backup-key.txt)"
+          aws s3api head-object --bucket "$BUCKET" --key "$KEY" \
+            --query '{tamanho_bytes: ContentLength, criptografia: ServerSideEncryption, chave_kms: SSEKMSKeyId, expira: Expiration}' \
+            --output json | tee reports/backup-objeto.json
+          echo "Cópias atuais na geração diária:"
+          aws s3api list-objects-v2 --bucket "$BUCKET" --prefix diario/ \
+            --query 'Contents[].{chave: Key, bytes: Size, data: LastModified}' --output table | tee reports/backup-copias.txt
+          echo "Regra de ciclo de vida:"
+          aws s3api get-bucket-lifecycle-configuration --bucket "$BUCKET" --output json | tee reports/backup-lifecycle.json
+          jq -e '.criptografia == "aws:kms"' reports/backup-objeto.json >/dev/null \
+            || { echo "::error::objeto sem SSE-KMS"; exit 1; }
+          {
+            echo "## Backup"
+            echo "- Objeto: \`s3://$BUCKET/$KEY\`"
+            echo "- $(jq -r '"\(.tamanho_bytes) bytes · \(.criptografia) · expira: \(.expira)"' reports/backup-objeto.json)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # ------------------------------------------------------------ restore-test (no runner)
+      # A VM do banco não tem permissão de leitura no bucket. A restauração é feita
+      # aqui, em um MongoDB descartável, sem sobrescrever o ambiente principal.
+      - name: Restaura o último backup em ambiente isolado
+        if: inputs.operation == 'restore-test'
+        run: |
+          set -euo pipefail
+          BUCKET="$(jq -r .backup_bucket.value tf-outputs.json)"
+          KEY="$(aws s3api list-objects-v2 --bucket "$BUCKET" --prefix diario/ \
+                   --query 'sort_by(Contents, &LastModified)[-1].Key' --output text)"
+          [[ -n "$KEY" && "$KEY" != "None" ]] || { echo "::error::nenhum backup em s3://$BUCKET/diario/ (rode a operação backup)"; exit 1; }
+          echo "Restaurando s3://$BUCKET/$KEY"
+          aws s3 cp "s3://$BUCKET/$KEY" /tmp/backup.archive.gz --only-show-errors
+
+          docker run -d --name restore-test "$MONGO_IMAGE" >/dev/null
+          for _ in $(seq 1 30); do
+            docker exec restore-test mongosh --quiet --eval 'db.runCommand({ping:1}).ok' 2>/dev/null | grep -q 1 && break
+            sleep 2
+          done
+          docker cp /tmp/backup.archive.gz restore-test:/tmp/backup.archive.gz
+          docker exec restore-test mongorestore --quiet --gzip --archive=/tmp/backup.archive.gz --nsInclude='kubeshop.*'
+
+          docker exec restore-test mongosh --quiet kubeshop --eval '
+            const ultimo = db.orders.find().sort({createdAt: -1}).limit(1).toArray()[0];
+            print(JSON.stringify({
+              colecoes: db.getCollectionNames(),
+              pedidos: db.orders.countDocuments(),
+              pedido_mais_recente: ultimo ? { id: String(ultimo._id), createdAt: ultimo.createdAt, itens: ultimo.items?.length } : null
+            }));' | tee reports/restore-resultado.json
+
+          jq -e '.colecoes | index("orders")' reports/restore-resultado.json >/dev/null \
+            || { echo "::error::coleção orders ausente no backup restaurado"; exit 1; }
+          {
+            echo "## Restore-test (ambiente isolado no runner)"
+            echo "- Backup: \`s3://$BUCKET/$KEY\`"
+            echo "- Resultado: \`$(cat reports/restore-resultado.json)\`"
+            echo "- Ambiente principal: não alterado"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Remove o MongoDB descartável
+        if: always() && inputs.operation == 'restore-test'
+        run: |
+          docker rm -f restore-test >/dev/null 2>&1 || true
+          rm -f /tmp/backup.archive.gz
+
+      - name: Publica relatórios
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ops-${{ inputs.operation }}-${{ inputs.environment }}-${{ github.run_id }}
+          path: reports/
+          if-no-files-found: ignore
+          retention-days: 30

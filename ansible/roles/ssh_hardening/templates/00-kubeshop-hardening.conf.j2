@@ -1,0 +1,26 @@
+# {{ ansible_managed }}
+# Entrega 2 / S1 - SSH somente por chave, sem login como root.
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PermitEmptyPasswords no
+PermitRootLogin no
+PubkeyAuthentication yes
+AuthenticationMethods publickey
+MaxAuthTries 3
+LoginGraceTime 30
+X11Forwarding no
+AllowAgentForwarding no
+{% if inventory_hostname in groups['bastion'] | default([]) %}
+# Bastion: precisa encaminhar TCP (ssh -J / ProxyCommand) até app e banco.
+# Nenhuma chave privada fica no bastion; a autenticação no destino usa a
+# chave de quem conecta (agente local), não o bastion.
+AllowTcpForwarding yes
+PermitTunnel no
+GatewayPorts no
+{% else %}
+# App e banco não são ponto de salto.
+AllowTcpForwarding no
+PermitTunnel no
+{% endif %}
+ClientAliveInterval 300
+ClientAliveCountMax 2

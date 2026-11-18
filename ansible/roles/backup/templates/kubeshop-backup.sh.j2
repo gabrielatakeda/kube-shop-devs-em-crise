@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# {{ ansible_managed }}
+# Dump lógico (consistente) do banco kubeshop, enviado em streaming para o S3:
+# nada fica gravado no disco da VM. Usa o usuário 'backup' (papel mínimo).
+set -euo pipefail
+
+BUCKET="{{ backup_bucket }}"
+REGION="{{ aws_region }}"
+PREFIX="diario"
+TS="$(date -u +%Y-%m-%dT%H%M%SZ)"
+KEY="${PREFIX}/kubeshop-{{ kubeshop_env }}-${TS}.archive.gz"
+
+log() { printf '{"time":"%s","event":"backup","%s":"%s"}\n' "$(date -u +%FT%TZ)" "$1" "$2"; }
+
+log status "inicio"
+
+# A senha é lida dentro do contêiner a partir do segredo montado; não passa pelo host.
+docker exec kubeshop-mongodb sh -c \
+  'exec mongodump --quiet --username backup --authenticationDatabase admin \
+     --password "$(cat /run/secrets/mongo_backup_password)" \
+     --db kubeshop --archive --gzip' \
+  | /usr/local/bin/aws s3 cp - "s3://${BUCKET}/${KEY}" \
+      --region "${REGION}" --only-show-errors
+# Criptografia: padrão do bucket (SSE-KMS com a CMK do projeto, definido no Terraform).
+
+# A VM não tem permissão de leitura no bucket (por desenho), então a conferência
+# do objeto é feita pela pipeline (ops.yml), não aqui.
+log result "PASS"
+log key "${KEY}"

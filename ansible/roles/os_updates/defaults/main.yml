@@ -1,0 +1,9 @@
+---
+os_updates_base_packages:
+  - ca-certificates
+  - curl
+  - gnupg
+  - jq
+  - unzip
+  - openssl
+  - netcat-openbsd

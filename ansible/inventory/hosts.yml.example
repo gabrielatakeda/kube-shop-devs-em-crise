@@ -1,0 +1,30 @@
+# Exemplo do inventário gerado por gerar-inventario.sh (valores fictícios).
+all:
+  vars:
+    ansible_user: ubuntu
+    aws_region: us-east-2
+    kubeshop_env: dev
+    bastion_public_ip: 203.0.113.5
+    app_public_ip: 203.0.113.10
+    app_private_ip: 10.20.1.10
+    db_private_ip: 10.20.11.20
+    backup_bucket: kubeshop-dev-backup-000000000000
+    db_data_volume_id: vol-0123456789abcdef0
+    ssm_parameter_prefix: /kubeshop/dev
+  children:
+    bastion:
+      hosts:
+        kubeshop-bastion:
+          ansible_host: 203.0.113.5
+    app:
+      hosts:
+        kubeshop-app:
+          ansible_host: 10.20.1.10
+          ansible_ssh_common_args: >-
+            -o ProxyCommand="ssh -W %h:%p -o StrictHostKeyChecking=accept-new -o BatchMode=yes ubuntu@203.0.113.5"
+    db:
+      hosts:
+        kubeshop-db:
+          ansible_host: 10.20.11.20
+          ansible_ssh_common_args: >-
+            -o ProxyCommand="ssh -W %h:%p -o StrictHostKeyChecking=accept-new -o BatchMode=yes ubuntu@203.0.113.5"

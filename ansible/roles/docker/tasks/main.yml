@@ -1,0 +1,59 @@
+---
+# PM-04: instalar e configurar o Docker quando ainda não estiver disponível.
+# Repositório oficial da Docker (pacotes do Ubuntu não trazem o plugin compose v2 atual).
+
+- name: Cria diretório de chaves do apt
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Baixa a chave de assinatura do repositório Docker
+  ansible.builtin.get_url:
+    url: https://download.docker.com/linux/ubuntu/gpg
+    dest: /etc/apt/keyrings/docker.asc
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Adiciona o repositório Docker
+  ansible.builtin.apt_repository:
+    repo: >-
+      deb [arch={{ docker_apt_arch[ansible_architecture] | default('amd64') }} signed-by=/etc/apt/keyrings/docker.asc]
+      https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable
+    filename: docker
+    state: present
+
+- name: Instala Docker Engine e plugin compose
+  ansible.builtin.apt:
+    name: "{{ docker_packages }}"
+    state: present
+
+- name: Configura o daemon (rotação de logs e live-restore)
+  ansible.builtin.copy:
+    dest: /etc/docker/daemon.json
+    content: "{{ docker_daemon_config | to_nice_json }}\n"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reinicia docker
+
+- name: Docker habilitado e em execução
+  ansible.builtin.service:
+    name: docker
+    state: started
+    enabled: true
+
+- name: Aplica configuração do daemon antes de subir contêineres
+  ansible.builtin.meta: flush_handlers
+
+- name: Confere versão do plugin compose
+  ansible.builtin.command: docker compose version --short
+  register: docker_compose_version
+  changed_when: false
+
+- name: Versões instaladas
+  ansible.builtin.debug:
+    msg: "Docker Compose {{ docker_compose_version.stdout }}"

@@ -1,0 +1,59 @@
+---
+# Consulta de saúde: contêineres, healthchecks, disco e, na VM da aplicação,
+# readiness da API (inclui a conexão ao MongoDB) e versão em execução.
+
+- name: Contêineres e estado do healthcheck
+  ansible.builtin.command:
+    argv: [docker, ps, --all, --filter, "name=kubeshop-", --format, "{{ '{{.Names}}  {{.Image}}  {{.Status}}' }}"]
+  register: ops_health_ps
+  changed_when: false
+
+- name: Uso de disco e memória
+  ansible.builtin.shell: |
+    set -o pipefail
+    df -h / {{ mongo_data_mount if inventory_hostname in groups['db'] else '' }} | sed 1d
+    free -m | awk 'NR==2 {print "memória: " $3 " MB usados de " $2 " MB"}'
+    uptime -p
+  args:
+    executable: /bin/bash
+  register: ops_health_host
+  changed_when: false
+
+- name: Readiness da API e versão (VM da aplicação)
+  when: inventory_hostname in groups['app']
+  block:
+    - name: GET /api/health/ready
+      ansible.builtin.uri:
+        url: https://127.0.0.1/api/health/ready
+        validate_certs: false
+        status_code: [200, 503]
+      register: ops_health_ready
+
+    - name: GET /api/info
+      ansible.builtin.uri:
+        url: https://127.0.0.1/api/info
+        validate_certs: false
+      register: ops_health_info
+
+- name: Último backup registrado (VM do banco)
+  when: inventory_hostname in groups['db']
+  ansible.builtin.command: tail -n 3 /var/log/kubeshop-backup.log
+  register: ops_health_backup
+  changed_when: false
+  failed_when: false
+
+- name: Resultado
+  ansible.builtin.debug:
+    msg: "{{ ops_health_ps.stdout_lines + ops_health_host.stdout_lines
+             + (['readiness: ' ~ (ops_health_ready.json | default({}) | to_json),
+                 'versão: ' ~ (ops_health_info.json.version | default('-'))] if inventory_hostname in groups['app'] else [])
+             + (['backup: ' ~ (ops_health_backup.stdout_lines | default([]) | join(' | '))] if inventory_hostname in groups['db'] else []) }}"
+
+- name: Falha se algum contêiner não estiver saudável
+  ansible.builtin.assert:
+    that:
+      - ops_health_ps.stdout_lines | length > 0
+      - ops_health_ps.stdout_lines | reject('search', '[(]healthy[)]') | list | length == 0
+      - inventory_hostname not in groups['app'] or ops_health_ready.status == 200
+    fail_msg: "Serviço com problema em {{ inventory_hostname }}. Rode a operação 'logs' para diagnosticar."
+    quiet: true

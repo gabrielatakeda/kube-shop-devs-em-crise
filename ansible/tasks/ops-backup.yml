@@ -1,0 +1,39 @@
+---
+# Executa agora a rotina de backup (a mesma do cron) na VM do banco.
+# A conferência do objeto no S3 (tamanho, criptografia, expiração) é feita pela
+# pipeline com a role dela, porque a VM só tem permissão de escrita.
+
+- name: Executa o backup
+  when: inventory_hostname in groups['db']
+  block:
+    - name: Roda kubeshop-backup
+      ansible.builtin.command: /usr/bin/flock -w 60 /run/kubeshop-backup.lock /usr/local/sbin/kubeshop-backup
+      register: ops_backup_run
+      changed_when: true
+
+    - name: Registra a execução no log da VM
+      ansible.builtin.shell: |
+        set -o pipefail
+        printf '%s\n' "$OPS_OUT" >> /var/log/kubeshop-backup.log
+      args:
+        executable: /bin/bash
+      environment:
+        OPS_OUT: "{{ ops_backup_run.stdout }}"
+      changed_when: false
+
+    - name: Extrai a chave do objeto gerado
+      ansible.builtin.set_fact:
+        ops_backup_key: >-
+          {{ (ops_backup_run.stdout_lines | select('search', '"key"') | first | from_json).key }}
+
+    - name: Salva a chave para a pipeline conferir no S3
+      ansible.builtin.copy:
+        dest: "{{ ops_report_dir }}/backup-key.txt"
+        content: "{{ ops_backup_key }}\n"
+        mode: "0644"
+      delegate_to: localhost
+      become: false
+
+    - name: Resultado
+      ansible.builtin.debug:
+        msg: "Backup enviado: s3://{{ backup_bucket }}/{{ ops_backup_key }}"

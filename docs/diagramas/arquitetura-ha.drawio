@@ -1,0 +1,145 @@
+<mxfile host="app.diagrams.net" agent="kubeshop-docs">
+  <diagram id="ha" name="Proposta de alta disponibilidade">
+    <mxGraphModel dx="1500" dy="1000" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1500" pageHeight="1000" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="title" value="&lt;b&gt;KubeShop · proposta de alta disponibilidade (projetada, não implantada)&lt;/b&gt;&lt;br&gt;us-east-2 · 2 AZs para aplicação e NAT · 3 AZs para o MongoDB" style="text;html=1;align=left;verticalAlign=top;fontSize=16;" vertex="1" parent="1">
+          <mxGeometry x="20" y="10" width="900" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="users" value="Visitantes" style="shape=umlActor;verticalLabelPosition=bottom;verticalAlign=top;html=1;" vertex="1" parent="1">
+          <mxGeometry x="40" y="200" width="30" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="dns" value="DNS (domínio)&lt;br&gt;+ ACM (TLS)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="110" y="205" width="110" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="admins" value="Grupo" style="shape=umlActor;verticalLabelPosition=bottom;verticalAlign=top;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="40" y="760" width="30" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="ssmm" value="F5 · Session Manager&lt;br&gt;(sem porta 22)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="100" y="765" width="140" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="vpc" value="VPC 10.20.0.0/16" style="rounded=0;whiteSpace=wrap;html=1;verticalAlign=top;align=left;spacingLeft=8;fillColor=none;strokeColor=#82b366;strokeWidth=2;dashed=1;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="270" y="70" width="1000" height="880" as="geometry"/>
+        </mxCell>
+        <mxCell id="alb" value="&lt;b&gt;Application Load Balancer&lt;/b&gt; :443 (80→301)&lt;br&gt;health check GET /api/health/ready" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="520" y="110" width="440" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="aza" value="AZ a · us-east-2a" style="rounded=0;whiteSpace=wrap;html=1;verticalAlign=top;align=left;spacingLeft=6;fillColor=none;strokeColor=#999999;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="300" y="180" width="300" height="750" as="geometry"/>
+        </mxCell>
+        <mxCell id="azb" value="AZ b · us-east-2b" style="rounded=0;whiteSpace=wrap;html=1;verticalAlign=top;align=left;spacingLeft=6;fillColor=none;strokeColor=#999999;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="620" y="180" width="300" height="750" as="geometry"/>
+        </mxCell>
+        <mxCell id="azc" value="AZ c · us-east-2c" style="rounded=0;whiteSpace=wrap;html=1;verticalAlign=top;align=left;spacingLeft=6;fillColor=none;strokeColor=#999999;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="940" y="180" width="300" height="750" as="geometry"/>
+        </mxCell>
+        <mxCell id="puba" value="Pública 10.20.1.0/24" style="rounded=0;whiteSpace=wrap;html=1;verticalAlign=top;fillColor=#e1f5e1;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="315" y="210" width="270" height="110" as="geometry"/>
+        </mxCell>
+        <mxCell id="pubb" value="Pública 10.20.2.0/24" style="rounded=0;whiteSpace=wrap;html=1;verticalAlign=top;fillColor=#e1f5e1;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="635" y="210" width="270" height="110" as="geometry"/>
+        </mxCell>
+        <mxCell id="nata" value="NAT GW a (EIP)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="390" y="250" width="120" height="40" as="geometry"/>
+        </mxCell>
+        <mxCell id="natb" value="NAT GW b (EIP)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="710" y="250" width="120" height="40" as="geometry"/>
+        </mxCell>
+        <mxCell id="appa" value="Privada app 10.20.21.0/24" style="rounded=0;whiteSpace=wrap;html=1;verticalAlign=top;fillColor=#dae8fc;strokeColor=#6c8ebf;opacity=70;" vertex="1" parent="1">
+          <mxGeometry x="315" y="350" width="270" height="170" as="geometry"/>
+        </mxCell>
+        <mxCell id="appb" value="Privada app 10.20.22.0/24" style="rounded=0;whiteSpace=wrap;html=1;verticalAlign=top;fillColor=#dae8fc;strokeColor=#6c8ebf;opacity=70;" vertex="1" parent="1">
+          <mxGeometry x="635" y="350" width="270" height="170" as="geometry"/>
+        </mxCell>
+        <mxCell id="asg" value="Auto Scaling Group · mín 2 / máx 4" style="rounded=1;whiteSpace=wrap;html=1;dashed=1;fillColor=none;strokeColor=#6c8ebf;verticalAlign=bottom;fontStyle=2;" vertex="1" parent="1">
+          <mxGeometry x="330" y="380" width="560" height="125" as="geometry"/>
+        </mxCell>
+        <mxCell id="ia" value="&lt;b&gt;App 1&lt;/b&gt; t3.micro&lt;br&gt;frontend + api&lt;br&gt;(stateless)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="380" y="395" width="140" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="ib" value="&lt;b&gt;App 2&lt;/b&gt; t3.micro&lt;br&gt;frontend + api&lt;br&gt;(stateless)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="700" y="395" width="140" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="data_a" value="Privada dados 10.20.11.0/24" style="rounded=0;whiteSpace=wrap;html=1;verticalAlign=top;fillColor=#f8cecc;strokeColor=#b85450;opacity=60;" vertex="1" parent="1">
+          <mxGeometry x="315" y="560" width="270" height="170" as="geometry"/>
+        </mxCell>
+        <mxCell id="data_b" value="Privada dados 10.20.12.0/24" style="rounded=0;whiteSpace=wrap;html=1;verticalAlign=top;fillColor=#f8cecc;strokeColor=#b85450;opacity=60;" vertex="1" parent="1">
+          <mxGeometry x="635" y="560" width="270" height="170" as="geometry"/>
+        </mxCell>
+        <mxCell id="data_c" value="Privada dados 10.20.13.0/24&lt;br&gt;(rota → NAT a)" style="rounded=0;whiteSpace=wrap;html=1;verticalAlign=top;fillColor=#f8cecc;strokeColor=#b85450;opacity=60;" vertex="1" parent="1">
+          <mxGeometry x="955" y="560" width="270" height="170" as="geometry"/>
+        </mxCell>
+        <mxCell id="m1" value="&lt;b&gt;MongoDB primário&lt;/b&gt;&lt;br&gt;rs0 · EBS CMK" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="380" y="620" width="140" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="m2" value="&lt;b&gt;Secundário&lt;/b&gt;&lt;br&gt;rs0 · origem do backup" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
+          <mxGeometry x="700" y="620" width="140" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="m3" value="&lt;b&gt;Secundário&lt;/b&gt;&lt;br&gt;rs0" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
+          <mxGeometry x="1020" y="620" width="140" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="s3ep" value="S3 Gateway Endpoint" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+          <mxGeometry x="700" y="780" width="140" height="40" as="geometry"/>
+        </mxCell>
+        <mxCell id="regional" value="Serviços regionais" style="rounded=0;whiteSpace=wrap;html=1;verticalAlign=top;align=left;spacingLeft=6;fillColor=#f5f5f5;strokeColor=#999999;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="1290" y="70" width="190" height="880" as="geometry"/>
+        </mxCell>
+        <mxCell id="s3" value="&lt;b&gt;S3 backup GFS&lt;/b&gt;&lt;br&gt;diario/ 7d Std&lt;br&gt;semanal/ 5sem IA&lt;br&gt;mensal/ 12m Glacier IR" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;size=10;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+          <mxGeometry x="1300" y="740" width="170" height="110" as="geometry"/>
+        </mxCell>
+        <mxCell id="s3r" value="Réplica us-east-1" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;size=10;fillColor=#ffe6cc;strokeColor=#d79b00;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="1310" y="870" width="150" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="kms" value="KMS CMK · SSM params" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="1300" y="120" width="170" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="e1" value="F1 · 443" style="endArrow=classic;html=1;strokeWidth=2;strokeColor=#82b366;" edge="1" parent="1" source="users" target="dns">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e1b" value="" style="endArrow=classic;html=1;strokeWidth=2;strokeColor=#82b366;" edge="1" parent="1" source="dns" target="alb">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e1c" style="endArrow=classic;html=1;strokeColor=#82b366;" edge="1" parent="1" source="alb" target="ia">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e1d" style="endArrow=classic;html=1;strokeColor=#82b366;" edge="1" parent="1" source="alb" target="ib">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e3a" value="F3 · 27017" style="endArrow=classic;html=1;strokeColor=#b85450;" edge="1" parent="1" source="ia" target="m1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e3b" value="F3" style="endArrow=classic;html=1;strokeColor=#b85450;" edge="1" parent="1" source="ib" target="m1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e4a" value="F4 · replicação" style="endArrow=classic;html=1;dashed=1;strokeColor=#b85450;" edge="1" parent="1" source="m1" target="m2">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e4b" value="F4" style="endArrow=classic;html=1;dashed=1;strokeColor=#b85450;" edge="1" parent="1" source="m2" target="m3">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e7" value="F7 · backup" style="endArrow=classic;html=1;dashed=1;strokeColor=#d79b00;" edge="1" parent="1" source="m2" target="s3ep">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e7b" style="endArrow=classic;html=1;dashed=1;strokeColor=#d79b00;" edge="1" parent="1" source="s3ep" target="s3">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e7c" value="CRR" style="endArrow=classic;html=1;dashed=1;strokeColor=#d79b00;" edge="1" parent="1" source="s3" target="s3r">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e5" value="F5" style="endArrow=classic;html=1;strokeColor=#9673a6;" edge="1" parent="1" source="admins" target="ssmm">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e5b" value="F5 · qualquer instância" style="endArrow=classic;html=1;dashed=1;strokeColor=#9673a6;" edge="1" parent="1" source="ssmm" target="m1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e8a" value="F8" style="endArrow=classic;html=1;dashed=1;strokeColor=#d6b656;" edge="1" parent="1" source="ia" target="nata">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e8b" value="F8" style="endArrow=classic;html=1;dashed=1;strokeColor=#d6b656;" edge="1" parent="1" source="ib" target="natb">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

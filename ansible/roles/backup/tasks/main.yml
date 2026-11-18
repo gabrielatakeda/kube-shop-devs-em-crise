@@ -1,0 +1,63 @@
+---
+# Entrega 2 / Parte D, política mínima (opção A): dump lógico do MongoDB no S3.
+# A VM usa a própria identidade (instance profile) com permissão apenas de
+# s3:PutObject em diario/* (S5). Nenhuma chave de acesso é gravada na VM.
+# A AWS CLI roda no host: com IMDSv2 e hop limit 1, contêineres não alcançam
+# as credenciais da instância (proteção adicional).
+
+- name: Verifica se a AWS CLI v2 já está instalada
+  ansible.builtin.stat:
+    path: /usr/local/bin/aws
+  register: backup_awscli
+
+- name: Instala a AWS CLI v2 (instalador oficial)
+  when: not backup_awscli.stat.exists
+  block:
+    - name: Baixa o instalador
+      ansible.builtin.get_url:
+        url: "https://awscli.amazonaws.com/awscli-exe-linux-{{ ansible_architecture }}.zip"
+        dest: /tmp/awscliv2.zip
+        mode: "0600"
+
+    - name: Extrai o instalador
+      ansible.builtin.unarchive:
+        src: /tmp/awscliv2.zip
+        dest: /tmp
+        remote_src: true
+
+    - name: Executa o instalador
+      ansible.builtin.command: /tmp/aws/install
+      args:
+        creates: /usr/local/bin/aws
+
+    - name: Remove arquivos temporários
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop: [/tmp/awscliv2.zip, /tmp/aws]
+
+- name: Instala o script de backup
+  ansible.builtin.template:
+    src: kubeshop-backup.sh.j2
+    dest: /usr/local/sbin/kubeshop-backup
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Arquivo de log do backup
+  ansible.builtin.file:
+    path: /var/log/kubeshop-backup.log
+    state: touch
+    owner: root
+    group: adm
+    mode: "0640"
+    modification_time: preserve
+    access_time: preserve
+
+- name: Agenda o backup diário (geração Son)
+  ansible.builtin.cron:
+    name: kubeshop-backup-diario
+    user: root
+    minute: "{{ backup_cron_minute }}"
+    hour: "{{ backup_cron_hour }}"
+    job: "/usr/bin/flock -n /run/kubeshop-backup.lock /usr/local/sbin/kubeshop-backup >> /var/log/kubeshop-backup.log 2>&1"

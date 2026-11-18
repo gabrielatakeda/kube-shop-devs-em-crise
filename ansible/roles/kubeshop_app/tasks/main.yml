@@ -1,0 +1,98 @@
+---
+# VM da aplicação: proxy TLS + frontend (Nginx/React) + API (Express).
+# As imagens vêm do GHCR na versão docker_tag (PM-04). A API acessa o MongoDB
+# pelo IP privado da VM do banco (escopo REQ-03).
+
+- name: Diretórios do projeto
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: "{{ kubeshop_root }}", mode: "0755" }
+    - { path: "{{ kubeshop_root }}/app", mode: "0750" }
+    - { path: "{{ kubeshop_root }}/app/secrets", mode: "0700" }
+    - { path: "{{ kubeshop_root }}/app/tls", mode: "0700" }
+    - { path: "{{ kubeshop_root }}/app/proxy", mode: "0755" }
+
+- name: Grava a senha da aplicação no MongoDB (legível só pelo usuário da API)
+  ansible.builtin.copy:
+    dest: "{{ kubeshop_root }}/app/secrets/mongo-app-password"
+    content: "{{ hostvars['localhost']['kubeshop_secrets']['mongo-app-password'] }}\n"
+    owner: "{{ api_container_uid }}"
+    group: root
+    mode: "0400"
+  no_log: true
+  notify: Recria api
+
+# S3: certificado autoassinado para o IP público. O nome do arquivo inclui o IP:
+# se o EIP mudar, um novo certificado é gerado automaticamente.
+- name: Gera certificado TLS autoassinado
+  ansible.builtin.command:
+    argv:
+      - openssl
+      - req
+      - -x509
+      - -newkey
+      - rsa:2048
+      - -sha256
+      - -days
+      - "365"
+      - -nodes
+      - -keyout
+      - "{{ kubeshop_root }}/app/tls/{{ app_public_ip }}.key"
+      - -out
+      - "{{ kubeshop_root }}/app/tls/{{ app_public_ip }}.crt"
+      - -subj
+      - "/O=Zibiska Korp/CN={{ app_public_ip }}"
+      - -addext
+      - "subjectAltName=IP:{{ app_public_ip }}"
+    creates: "{{ kubeshop_root }}/app/tls/{{ app_public_ip }}.crt"
+  notify: Recria proxy
+
+- name: Restringe a chave privada TLS
+  ansible.builtin.file:
+    path: "{{ kubeshop_root }}/app/tls/{{ app_public_ip }}.key"
+    owner: root
+    group: root
+    mode: "0600"
+
+- name: Configuração do proxy HTTPS
+  ansible.builtin.template:
+    src: proxy-nginx.conf.j2
+    dest: "{{ kubeshop_root }}/app/proxy/nginx.conf"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Recria proxy
+
+- name: Gera o compose da VM da aplicação
+  ansible.builtin.template:
+    src: compose.yaml.j2
+    dest: "{{ kubeshop_root }}/app/compose.yaml"
+    owner: root
+    group: root
+    mode: "0640"
+
+- name: Confere se o MongoDB responde pela rede privada
+  ansible.builtin.wait_for:
+    host: "{{ db_private_ip }}"
+    port: 27017
+    timeout: 60
+
+# pull: missing -> baixa a imagem só quando docker_tag muda; o contêiner é
+# recriado apenas se a definição mudou (atualização controlada e idempotente).
+- name: Sobe/atualiza proxy, frontend e API e aguarda os healthchecks
+  community.docker.docker_compose_v2:
+    project_src: "{{ kubeshop_root }}/app"
+    state: present
+    pull: missing
+    remove_orphans: true
+    wait: true
+    wait_timeout: 300
+  notify: Remove imagens antigas
+
+- name: Aplica recriações pendentes (segredo, certificado ou config do proxy)
+  ansible.builtin.meta: flush_handlers

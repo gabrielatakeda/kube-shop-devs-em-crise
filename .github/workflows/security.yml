@@ -1,0 +1,148 @@
+# Entrega 2 / S7: análise automatizada da IaC e detecção de segredos no histórico.
+# Também é chamado pela infra-deploy.yml antes de qualquer plan/apply.
+# Relatórios ficam como artefatos da execução (copiar para docs/evidencias/).
+#
+# Achados aceitos ficam registrados no próprio código, junto do recurso:
+#   #trivy:ignore:<ID>              (com comentário "ACEITO ..." acima)
+#   #checkov:skip=<ID>:<justificativa>
+# e consolidados em docs/seguranca.md.
+name: security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+env:
+  TERRAFORM_VERSION: "1.17.0"
+  TRIVY_IMAGE: aquasec/trivy:0.67.2
+  CHECKOV_IMAGE: bridgecrew/checkov:3.2.495
+  GITLEAKS_VERSION: "8.28.0"
+
+jobs:
+  secrets:
+    name: Gitleaks (histórico completo)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Instala Gitleaks
+        run: |
+          set -euo pipefail
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            | tar -xz -C /usr/local/bin gitleaks
+          gitleaks version
+
+      - name: Procura segredos em todos os commits
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          gitleaks git . --redact --verbose \
+            --report-format json --report-path reports/gitleaks.json
+
+      - name: Publica relatório
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: relatorio-gitleaks
+          path: reports/
+          retention-days: 30
+
+  terraform:
+    name: Terraform fmt e validate
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      - name: terraform fmt -check
+        run: terraform fmt -check -recursive -diff infra bootstrap
+
+      - name: terraform validate
+        run: |
+          set -euo pipefail
+          for dir in infra bootstrap; do
+            echo "::group::${dir}"
+            terraform -chdir="${dir}" init -backend=false -input=false
+            terraform -chdir="${dir}" validate
+            echo "::endgroup::"
+          done
+
+  iac-scan:
+    name: Trivy e Checkov (IaC)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Trivy - relatório completo (todas as severidades)
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          docker run --rm -v "$PWD:/repo" -w /repo "$TRIVY_IMAGE" config \
+            --format table --output reports/trivy-config.txt infra
+          docker run --rm -v "$PWD:/repo" -w /repo "$TRIVY_IMAGE" config \
+            --format json --output reports/trivy-config.json infra
+          cat reports/trivy-config.txt
+
+      - name: Trivy - falha em achado alto/crítico sem decisão registrada
+        run: |
+          docker run --rm -v "$PWD:/repo" -w /repo "$TRIVY_IMAGE" config \
+            --severity HIGH,CRITICAL --exit-code 1 infra
+
+      - name: Checkov (falha em qualquer verificação não justificada)
+        run: |
+          set -euo pipefail
+          docker run --rm -v "$PWD:/repo" -w /repo "$CHECKOV_IMAGE" \
+            -d infra --framework terraform --quiet --compact \
+            --output cli --output json --output-file-path console,reports/checkov.json
+
+      - name: Lista achados aceitos (skips do Checkov)
+        if: always()
+        run: |
+          if [ -f reports/checkov.json ]; then
+            jq -r '.results.skipped_checks[]? | "- \(.check_id) \(.resource): \(.check_result.suppress_comment)"' \
+              reports/checkov.json | tee reports/achados-aceitos.md
+            { echo "### Achados aceitos (Checkov)"; cat reports/achados-aceitos.md; } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Publica relatórios
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: relatorios-iac
+          path: reports/
+          retention-days: 30
+
+  ansible:
+    name: ansible-lint
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: ansible
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Instala Ansible e coleções
+        run: |
+          set -euo pipefail
+          pip install --quiet "ansible-core>=2.18,<2.20" "ansible-lint>=25,<26"
+          ansible-galaxy collection install -r requirements.yml
+      - name: Sintaxe do playbook
+        run: |
+          cp inventory/hosts.yml.example inventory/hosts.yml
+          ansible-playbook --syntax-check playbook.yml
+      - name: ansible-lint
+        run: ansible-lint --offline playbook.yml roles/

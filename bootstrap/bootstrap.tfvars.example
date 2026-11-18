@@ -1,0 +1,3 @@
+# Copie para bootstrap.tfvars (ignorado pelo Git) e preencha.
+budget_emails    = ["integrante@exemplo.com"]
+budget_limit_usd = "20"

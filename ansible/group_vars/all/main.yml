@@ -1,0 +1,30 @@
+# Valores padrão. A pipeline sobrescreve com -e (parâmetros do workflow_dispatch).
+
+# ---------------------------------------------------------------- Parâmetros da PM-04
+# Prefixo das imagens: o Ansible usa <docker_image>-api e <docker_image>-frontend.
+docker_image: ghcr.io/gabrielatakeda/kubeshop
+# Versão publicada pelo app-ci.yml (tag Git vX.Y.Z -> imagem X.Y.Z).
+docker_tag: "1.0.0"
+mongo_tag: "8.0.17"
+# Aplicar atualizações do SO (apt dist-upgrade). Aceita true/false ou "true"/"false".
+update_os: false
+# Reiniciar a VM se a atualização exigir (arquivo /var/run/reboot-required).
+reboot_if_required: true
+# Pacotes adicionais: lista ou texto separado por vírgula ("curl,git,unzip").
+extra_packages: []
+
+# ---------------------------------------------------------------- Caminhos
+kubeshop_root: /opt/kubeshop
+mongo_data_mount: /data/mongo
+
+# ---------------------------------------------------------------- Backup
+backup_cron_hour: "3"
+backup_cron_minute: "15"
+
+# ---------------------------------------------------------------- Verificação
+# O smoke cria um pedido fictício de teste (igual ao scripts/smoke.mjs do projeto).
+run_smoke_test: true
+
+# UIDs usados pelas imagens oficiais (arquivos de segredo precisam ser legíveis por eles).
+mongo_container_uid: 999
+api_container_uid: 1000

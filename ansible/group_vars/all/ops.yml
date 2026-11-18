@@ -1,0 +1,13 @@
+# Parâmetros das rotinas de operação (ops.yml).
+ops_operations: [health, logs, restart, backup, reset-demo]
+ops_services: [all, proxy, frontend, api, mongodb]
+service: all
+log_lines: 200
+ops_report_dir: "{{ playbook_dir }}/../reports"
+
+# Serviço -> contêiner, projeto compose e grupo de hosts onde roda.
+ops_service_map:
+  proxy: { container: kubeshop-proxy, project: app, group: app }
+  frontend: { container: kubeshop-frontend, project: app, group: app }
+  api: { container: kubeshop-api, project: app, group: app }
+  mongodb: { container: kubeshop-mongodb, project: db, group: db }

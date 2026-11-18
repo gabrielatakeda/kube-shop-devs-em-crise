@@ -1,0 +1,31 @@
+---
+# Limpa o histórico de pedidos fictícios para preparar uma nova demonstração.
+# Ação destrutiva, separada das rotinas do dia a dia (escopo §10): a pipeline
+# exige confirmação digitada, e um backup é feito ANTES da limpeza.
+
+- name: Limpa os pedidos (VM do banco)
+  when: inventory_hostname in groups['db']
+  block:
+    - name: Backup de segurança antes da limpeza
+      ansible.builtin.include_tasks: ops-backup.yml
+
+    - name: Remove os pedidos da coleção orders
+      ansible.builtin.command:
+        argv:
+          - docker
+          - exec
+          - kubeshop-mongodb
+          - mongosh
+          - --quiet
+          - --eval
+          - >-
+            const fs = require('fs');
+            const app = db.getSiblingDB('kubeshop');
+            app.auth('kubeshop', fs.readFileSync('/run/secrets/mongo_app_password', 'utf8').trim());
+            print(JSON.stringify({ removidos: app.orders.deleteMany({}).deletedCount, restantes: app.orders.countDocuments() }));
+      register: ops_reset_result
+      changed_when: (ops_reset_result.stdout | from_json).removidos > 0
+
+    - name: Resultado
+      ansible.builtin.debug:
+        msg: "{{ ops_reset_result.stdout | from_json }} · backup anterior: {{ ops_backup_key }}"

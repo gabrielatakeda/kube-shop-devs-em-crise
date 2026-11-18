@@ -1,0 +1,64 @@
+---
+# Verifica que serviços e contêineres esperados estão em execução (PM-04) e
+# executa o fluxo funcional da loja (escopo ACE-04). Não altera configuração.
+
+- name: Estado dos contêineres da VM
+  ansible.builtin.command:
+    argv: [docker, ps, --filter, "name=kubeshop-", --format, "{{ '{{.Names}}|{{.Image}}|{{.Status}}' }}"]
+  register: verify_ps
+  changed_when: false
+
+- name: Mostra contêineres
+  ansible.builtin.debug:
+    var: verify_ps.stdout_lines
+
+- name: Todos os contêineres esperados estão saudáveis
+  ansible.builtin.assert:
+    that:
+      - verify_ps.stdout_lines | select('search', '^' ~ item ~ '[|].*[(]healthy[)]') | list | length == 1
+    fail_msg: "{{ item }} não está em execução com healthcheck saudável"
+    quiet: true
+  loop: "{{ verify_expected_containers[group_names | first] }}"
+
+- name: Verificações da VM da aplicação
+  when: "'app' in group_names"
+  block:
+    - name: HTTP redireciona para HTTPS
+      ansible.builtin.uri:
+        url: "http://127.0.0.1/"
+        follow_redirects: none
+        status_code: 301
+      register: verify_redirect
+
+    - name: API pronta via HTTPS (inclui conexão ao MongoDB)
+      ansible.builtin.uri:
+        url: "https://127.0.0.1/api/health/ready"
+        validate_certs: false
+        return_content: true
+      register: verify_ready
+      retries: 10
+      delay: 6
+      until: verify_ready.status == 200
+
+    - name: Versão em execução corresponde ao docker_tag solicitado
+      ansible.builtin.uri:
+        url: "https://127.0.0.1/api/info"
+        validate_certs: false
+        return_content: true
+      register: verify_info
+      failed_when: verify_info.json.version != (docker_tag | string)
+
+    - name: Fluxo funcional (página, catálogo, criação e consulta de pedido)
+      ansible.builtin.command:
+        argv: [docker, exec, kubeshop-api, node, /app/scripts/smoke.mjs, "http://frontend:8080"]
+      register: verify_smoke
+      changed_when: false
+      when: run_smoke_test | bool
+
+    - name: Resultado
+      ansible.builtin.debug:
+        msg:
+          - "URL: https://{{ app_public_ip }}"
+          - "Versão: {{ verify_info.json.version }}"
+          - "Readiness: {{ verify_ready.json }}"
+          - "Smoke: {{ verify_smoke.stdout | default('não executado') }}"

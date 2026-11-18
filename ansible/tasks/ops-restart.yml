@@ -1,0 +1,25 @@
+---
+# Reinicia serviços sem recriar contêineres nem alterar dados (os pedidos ficam
+# no volume do MongoDB). Aguarda os healthchecks e confere o resultado.
+
+- name: Serviços desta VM selecionados
+  ansible.builtin.set_fact:
+    ops_restart_services: >-
+      {{ ops_service_map | dict2items
+         | selectattr('value.group', 'in', group_names)
+         | selectattr('key', 'in', ([service] if service != 'all' else ops_service_map.keys() | list))
+         | map(attribute='key') | list }}
+    ops_restart_project: "{{ kubeshop_root }}/{{ 'db' if inventory_hostname in groups['db'] else 'app' }}"
+
+- name: Reinicia e aguarda os healthchecks
+  community.docker.docker_compose_v2:
+    project_src: "{{ ops_restart_project }}"
+    services: "{{ ops_restart_services }}"
+    state: restarted
+    wait: true
+    wait_timeout: 300
+  when: ops_restart_services | length > 0
+
+- name: Confere o estado após o reinício
+  ansible.builtin.include_tasks: ops-health.yml
+  when: ops_restart_services | length > 0

@@ -1,0 +1,97 @@
+<mxfile host="app.diagrams.net" agent="kubeshop-docs">
+  <diagram id="implantada" name="Arquitetura implantada">
+    <mxGraphModel dx="1400" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1400" pageHeight="900" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="title" value="&lt;b&gt;KubeShop · arquitetura implantada (Entrega 2)&lt;/b&gt;&lt;br&gt;us-east-2 · 1 AZ · Terraform + Ansible via GitHub Actions" style="text;html=1;align=left;verticalAlign=top;fontSize=16;" vertex="1" parent="1">
+          <mxGeometry x="20" y="10" width="700" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="users" value="Visitantes&lt;br&gt;(navegador)" style="shape=umlActor;verticalLabelPosition=bottom;verticalAlign=top;html=1;" vertex="1" parent="1">
+          <mxGeometry x="60" y="160" width="30" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="admins" value="Grupo&lt;br&gt;(CIDR autorizado)" style="shape=umlActor;verticalLabelPosition=bottom;verticalAlign=top;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="60" y="390" width="30" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="gha" value="GitHub Actions&lt;br&gt;(access key em Secrets)&lt;br&gt;infra-deploy · ops · destroy" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="20" y="560" width="150" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="vpc" value="VPC 10.20.0.0/16 · us-east-2a" style="rounded=0;whiteSpace=wrap;html=1;verticalAlign=top;align=left;spacingLeft=8;fillColor=none;strokeColor=#82b366;strokeWidth=2;dashed=1;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="260" y="80" width="760" height="620" as="geometry"/>
+        </mxCell>
+        <mxCell id="igw" value="Internet Gateway" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="200" y="250" width="110" height="40" as="geometry"/>
+        </mxCell>
+        <mxCell id="pub" value="Sub-rede PÚBLICA 10.20.1.0/24 (rota 0.0.0.0/0 → IGW)" style="rounded=0;whiteSpace=wrap;html=1;verticalAlign=top;align=left;spacingLeft=8;fillColor=#e1f5e1;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="340" y="110" width="660" height="300" as="geometry"/>
+        </mxCell>
+        <mxCell id="bastion" value="&lt;b&gt;Bastion&lt;/b&gt; t3.nano · EIP&lt;br&gt;sg-bastion: 22 só do CIDR do grupo&lt;br&gt;sem role · sem Docker · sem dados&lt;br&gt;AllowTcpForwarding yes" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="370" y="290" width="200" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="app" value="&lt;b&gt;VM-APP&lt;/b&gt; t3.micro · EIP&lt;br&gt;proxy-tls :443 (80→301)&lt;br&gt;→ frontend Nginx/React :8080&lt;br&gt;→ api Node/Express :3000&lt;br&gt;sg-app: 443/80 público · 22 só do bastion" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="610" y="140" width="230" height="110" as="geometry"/>
+        </mxCell>
+        <mxCell id="nat" value="NAT Gateway&lt;br&gt;(EIP)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="870" y="300" width="110" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="priv" value="Sub-rede PRIVADA 10.20.11.0/24 (rota 0.0.0.0/0 → NAT)" style="rounded=0;whiteSpace=wrap;html=1;verticalAlign=top;align=left;spacingLeft=8;fillColor=#f8cecc;strokeColor=#b85450;opacity=60;" vertex="1" parent="1">
+          <mxGeometry x="340" y="440" width="660" height="230" as="geometry"/>
+        </mxCell>
+        <mxCell id="db" value="&lt;b&gt;VM-DB&lt;/b&gt; t3.micro · sem IP público&lt;br&gt;mongo:8.0.17 · 27017 só no IP privado&lt;br&gt;sg-db: 27017 só da app · 22 só do bastion&lt;br&gt;role: s3:PutObject em diario/*&lt;br&gt;cron 03:15 UTC mongodump → S3" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
+          <mxGeometry x="560" y="480" width="260" height="110" as="geometry"/>
+        </mxCell>
+        <mxCell id="ebs" value="EBS dados 10 GB&lt;br&gt;/data/mongo (CMK)" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;size=10;fillColor=#f5f5f5;" vertex="1" parent="1">
+          <mxGeometry x="850" y="490" width="110" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="aws" value="Serviços regionais" style="rounded=0;whiteSpace=wrap;html=1;verticalAlign=top;align=left;spacingLeft=8;fillColor=#f5f5f5;strokeColor=#999999;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="1060" y="80" width="320" height="620" as="geometry"/>
+        </mxCell>
+        <mxCell id="s3b" value="&lt;b&gt;S3 backup&lt;/b&gt;&lt;br&gt;diario/ · expira em 2 dias&lt;br&gt;SSE-KMS · TLS obrigatório" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;size=10;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+          <mxGeometry x="1110" y="480" width="200" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="ssm" value="SSM Parameter Store&lt;br&gt;senhas MongoDB (SecureString)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="1110" y="120" width="200" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="kms" value="KMS CMK alias/kubeshop-env&lt;br&gt;(EBS, S3, SSM)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="1110" y="210" width="200" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="state" value="S3 Terraform state&lt;br&gt;(bootstrap, versionado)" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;size=10;fillColor=#f5f5f5;" vertex="1" parent="1">
+          <mxGeometry x="1110" y="300" width="200" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="ghcr" value="GHCR&lt;br&gt;kubeshop-api / -frontend:X.Y.Z" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;" vertex="1" parent="1">
+          <mxGeometry x="1110" y="400" width="200" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="e1" value="F1 · HTTPS 443" style="endArrow=classic;html=1;strokeWidth=2;strokeColor=#82b366;" edge="1" parent="1" source="users" target="app">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e5" value="F5 · SSH 22" style="endArrow=classic;html=1;strokeWidth=2;strokeColor=#6c8ebf;" edge="1" parent="1" source="admins" target="bastion">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e5a" value="ssh -J" style="endArrow=classic;html=1;dashed=1;strokeColor=#6c8ebf;" edge="1" parent="1" source="bastion" target="app">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e5b" value="ssh -J" style="endArrow=classic;html=1;dashed=1;strokeColor=#6c8ebf;" edge="1" parent="1" source="bastion" target="db">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e3" value="F3 · 27017" style="endArrow=classic;html=1;strokeWidth=2;strokeColor=#b85450;" edge="1" parent="1" source="app" target="db">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="eebs" style="endArrow=none;html=1;" edge="1" parent="1" source="db" target="ebs">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e7" value="F7 · backup via NAT" style="endArrow=classic;html=1;dashed=1;strokeColor=#d79b00;" edge="1" parent="1" source="db" target="nat">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e7b" value="PutObject" style="endArrow=classic;html=1;dashed=1;strokeColor=#d79b00;" edge="1" parent="1" source="nat" target="s3b">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e6" value="F6 · Terraform/SSM (access key) + SSH temporário" style="endArrow=classic;html=1;dashed=1;strokeColor=#666666;" edge="1" parent="1" source="gha" target="bastion">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="eigw" style="endArrow=none;html=1;" edge="1" parent="1" source="igw" target="pub">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

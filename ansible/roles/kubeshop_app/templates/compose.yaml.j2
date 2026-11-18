@@ -1,0 +1,105 @@
+# {{ ansible_managed }}
+# VM da aplicação. Adaptado de compose.yaml do projeto:
+# - imagens versionadas do GHCR (docker_image/docker_tag)
+# - MongoDB em outra VM (MONGO_HOST = IP privado da VM do banco)
+# - proxy TLS na frente do frontend (portas 80 -> redirect e 443)
+name: kubeshop-app
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  proxy:
+    image: nginx:{{ kubeshop_app_proxy_tag }}
+    container_name: kubeshop-proxy
+    ports:
+      - "80:8080"
+      - "443:8443"
+    volumes:
+      - ./proxy/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./tls/{{ app_public_ip }}.crt:/etc/nginx/tls/tls.crt:ro
+      - ./tls/{{ app_public_ip }}.key:/etc/nginx/tls/tls.key:ro
+    depends_on:
+      frontend:
+        condition: service_healthy
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m
+      - /var/cache/nginx:size=16m
+      - /var/run:size=1m
+    cap_drop: [ALL]
+    cap_add: [CHOWN, SETUID, SETGID]
+    security_opt: [no-new-privileges:true]
+    healthcheck:
+      test: [CMD, wget, -q, -O, /dev/null, "http://127.0.0.1:8080/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    networks: [web]
+    logging: *logging
+
+  frontend:
+    image: {{ docker_image }}-frontend:{{ docker_tag }}
+    container_name: kubeshop-frontend
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    healthcheck:
+      test: [CMD, wget, -q, -O, /dev/null, "http://127.0.0.1:8080/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    networks: [web]
+    logging: *logging
+
+  api:
+    image: {{ docker_image }}-api:{{ docker_tag }}
+    container_name: kubeshop-api
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: "3000"
+      APP_VERSION: "{{ docker_tag }}"
+      MONGO_HOST: "{{ db_private_ip }}"
+      MONGO_PORT: "27017"
+      MONGO_DATABASE: kubeshop
+      MONGO_AUTH_SOURCE: kubeshop
+      MONGO_USERNAME: kubeshop
+      MONGO_PASSWORD_FILE: /run/secrets/mongo_app_password
+    secrets: [mongo_app_password]
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    stop_grace_period: 20s
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:3000/api/health/ready',{signal:AbortSignal.timeout(2500)}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 4s
+      retries: 3
+      start_period: 30s
+    networks: [web]
+    logging: *logging
+
+networks:
+  web:
+
+secrets:
+  mongo_app_password:
+    file: ./secrets/mongo-app-password

@@ -9,3 +9,31 @@ coverage/
 test-results/
 playwright-report/
 *.log
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+*.tfplan
+tfplan
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+
+# Chaves e credenciais
+*.pem
+*.key
+id_rsa*
+id_ed25519*
+.aws/
+
+# Ansible (inventário gerado pela pipeline)
+ansible/inventory/hosts.yml
+*.retry
+
+# Relatórios gerados localmente
+reports/

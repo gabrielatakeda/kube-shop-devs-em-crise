@@ -1,0 +1,205 @@
+# Desativação do ambiente (Entrega 2 §11 / escopo "Desativar").
+# - Exige confirmação digitada: DESTRUIR-<environment>
+# - terraform destroy de TODOS os recursos do ambiente, inclusive o bucket de
+#   backup com as cópias (backup_force_destroy = true) e a CMK (exclusão agendada)
+# - Depois confere na AWS, pela CLI, se sobrou algo que gere cobrança e publica
+#   o inventário como evidência (copiar para docs/evidencias/).
+#
+# Permanecem por desenho (fora deste ambiente): bucket do state e usuário IAM da pipeline
+# (bootstrap), alerta de orçamento.
+name: infra-destroy
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Ambiente a destruir
+        type: choice
+        options: [dev, homolog, prod]
+        default: dev
+      confirm:
+        description: "Digite DESTRUIR-<environment> para confirmar"
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: infra-${{ inputs.environment }}
+  cancel-in-progress: false
+
+env:
+  TERRAFORM_VERSION: "1.17.0"
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-2' }}
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+  IN_ENVIRONMENT: ${{ inputs.environment }}
+  IN_CONFIRM: ${{ inputs.confirm }}
+
+jobs:
+  destroy:
+    name: Destroy · ${{ inputs.environment }}
+    runs-on: ubuntu-24.04
+    environment: ${{ inputs.environment }}
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: infra
+    steps:
+      - name: Confirmação
+        working-directory: .
+        run: |
+          if [[ "$IN_CONFIRM" != "DESTRUIR-${IN_ENVIRONMENT}" ]]; then
+            echo "::error::confirmação incorreta. Digite exatamente DESTRUIR-${IN_ENVIRONMENT}"; exit 1
+          fi
+
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      - name: terraform init
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
+            -backend-config="key=kubeshop/${IN_ENVIRONMENT}/terraform.tfstate" \
+            -backend-config="region=${AWS_REGION}"
+
+      # Variáveis obrigatórias sem padrão. No destroy os valores não alteram nada;
+      # usam-se os mesmos do deploy para o plano refletir o ambiente real.
+      - name: Variáveis do Terraform
+        env:
+          SSH_CIDR: ${{ vars.SSH_ALLOWED_CIDR }}
+          SSH_PUBLIC_KEY: ${{ secrets.SSH_PUBLIC_KEY }}
+        run: |
+          set -euo pipefail
+          jq -n --arg region "$AWS_REGION" --arg az "${AWS_REGION}a" --arg env "$IN_ENVIRONMENT" \
+                --arg cidrs "${SSH_CIDR:-192.0.2.1/32}" --arg key "$SSH_PUBLIC_KEY" \
+            '{region: $region, availability_zone: $az, environment: $env,
+              ssh_allowed_cidrs: ($cidrs | split(",") | map(gsub("[[:space:]]"; "")) | map(select(length > 0))),
+              ssh_public_key: $key}' > pipeline.auto.tfvars.json
+
+      - name: Inventário antes do destroy
+        run: |
+          set -euo pipefail
+          mkdir -p ../reports
+          terraform output -json > ../reports/outputs-antes.json || echo '{}' > ../reports/outputs-antes.json
+          terraform state list | tee ../reports/recursos-antes.txt
+          echo "$(wc -l < ../reports/recursos-antes.txt) recursos no state"
+
+      - name: Remove regras SSH temporárias esquecidas (fora do Terraform)
+        run: |
+          set -euo pipefail
+          SG_ID="$(jq -r '.bastion_security_group_id.value // empty' ../reports/outputs-antes.json)"
+          [[ -n "$SG_ID" ]] || exit 0
+          IDS="$(aws ec2 describe-security-group-rules \
+                  --filters "Name=group-id,Values=$SG_ID" "Name=tag:temporario,Values=pipeline" \
+                  --query 'SecurityGroupRules[].SecurityGroupRuleId' --output text)"
+          if [[ -n "$IDS" ]]; then
+            # shellcheck disable=SC2086
+            aws ec2 revoke-security-group-ingress --group-id "$SG_ID" --security-group-rule-ids $IDS
+            echo "Removidas: $IDS"
+          else
+            echo "Nenhuma regra temporária encontrada"
+          fi
+
+      - name: terraform plan -destroy
+        run: |
+          terraform plan -destroy -out=destroy.tfplan -no-color | tee ../reports/plano-destroy.txt
+          {
+            echo "## Plano de destruição (${IN_ENVIRONMENT})"
+            echo '```'
+            grep -E '^Plan:|^No changes' ../reports/plano-destroy.txt || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: terraform apply (destroy)
+        run: terraform apply -no-color destroy.tfplan | tee ../reports/destroy.log
+
+      - name: Confere na AWS se sobrou algo que gere cobrança
+        working-directory: .
+        run: |
+          set -euo pipefail
+          R=reports/inventario-pos-destroy.md
+          F=(--filters "Name=tag:projeto,Values=kubeshop" "Name=tag:ambiente,Values=${IN_ENVIRONMENT}")
+          problemas=0
+          check() { # titulo, saída
+            local titulo="$1" saida="$2"
+            if [[ -z "$saida" || "$saida" == "None" ]]; then
+              echo "| $titulo | nenhum | OK |" >> "$R"
+            else
+              echo "| $titulo | $(echo "$saida" | tr '\n\t' '  ') | **RESTANTE** |" >> "$R"
+              problemas=$((problemas + 1))
+            fi
+          }
+          {
+            echo "# Inventário pós-destroy: ${IN_ENVIRONMENT}"
+            echo
+            echo "Execução: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID} · $(date -u +%FT%TZ) · região ${AWS_REGION}"
+            echo
+            echo "| Recurso | Encontrado | Situação |"
+            echo "|---|---|---|"
+          } > "$R"
+
+          check "Instâncias EC2" "$(aws ec2 describe-instances "${F[@]}" "Name=instance-state-name,Values=pending,running,stopping,stopped" \
+                                    --query 'Reservations[].Instances[].InstanceId' --output text)"
+          check "NAT gateways"  "$(aws ec2 describe-nat-gateways --filter "Name=tag:projeto,Values=kubeshop" "Name=tag:ambiente,Values=${IN_ENVIRONMENT}" "Name=state,Values=pending,available,deleting" \
+                                    --query 'NatGateways[].NatGatewayId' --output text)"
+          check "IPs públicos (EIP)" "$(aws ec2 describe-addresses "${F[@]}" --query 'Addresses[].PublicIp' --output text)"
+          check "Volumes EBS"   "$(aws ec2 describe-volumes "${F[@]}" --query 'Volumes[].VolumeId' --output text)"
+          check "Snapshots"     "$(aws ec2 describe-snapshots --owner-ids self "${F[@]}" --query 'Snapshots[].SnapshotId' --output text)"
+          check "VPC"           "$(aws ec2 describe-vpcs "${F[@]}" --query 'Vpcs[].VpcId' --output text)"
+
+          BUCKET="$(jq -r '.backup_bucket.value // empty' reports/outputs-antes.json)"
+          if [[ -n "$BUCKET" ]] && aws s3api head-bucket --bucket "$BUCKET" 2>/dev/null; then
+            check "Bucket de backup" "$BUCKET"
+          else
+            check "Bucket de backup" ""
+          fi
+
+          PARAMS="$(aws ssm get-parameters-by-path --path "/kubeshop/${IN_ENVIRONMENT}" --query 'Parameters[].Name' --output text)"
+          check "Parâmetros SSM" "$PARAMS"
+
+          KEY_ID="$(aws kms describe-key --key-id "alias/kubeshop-${IN_ENVIRONMENT}" --query 'KeyMetadata.KeyId' --output text 2>/dev/null || true)"
+          {
+            echo
+            echo "## Itens com prazo da AWS (não são falha)"
+            echo
+            if [[ -n "$KEY_ID" ]]; then
+              aws kms describe-key --key-id "$KEY_ID" \
+                --query 'KeyMetadata.{chave: KeyId, estado: KeyState, exclusao_em: DeletionDate}' --output table
+            else
+              echo "- Chave KMS: alias removido; a chave fica em PendingDeletion por 7 dias (consultar no console KMS)."
+            fi
+            echo
+            echo "## Permanecem por desenho (bootstrap)"
+            echo
+            echo "- Bucket do Terraform state \`${{ vars.TF_STATE_BUCKET }}\` (key kubeshop/${IN_ENVIRONMENT}/ sem recursos)"
+            echo "- Usuário IAM da pipeline e alerta de orçamento (sem custo)"
+          } >> "$R"
+
+          cat "$R"
+          cat "$R" >> "$GITHUB_STEP_SUMMARY"
+          if (( problemas > 0 )); then
+            echo "::error::$problemas tipo(s) de recurso ainda existem. Verifique o inventário."
+            exit 1
+          fi
+
+      - name: Publica evidências
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evidencias-destroy-${{ inputs.environment }}-${{ github.run_id }}
+          path: reports/
+          if-no-files-found: ignore
+          retention-days: 90

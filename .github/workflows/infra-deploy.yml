@@ -1,0 +1,324 @@
+# PM-04: pipeline que provisiona (Terraform) e configura/mantém (Ansible) o
+# ambiente do KubeShop a partir de parâmetros informados na execução.
+#
+#   security ──▶ terraform (init/plan[/apply]) ──▶ ansible via bastion (SO, Docker, app) ──▶ smoke externo
+#
+# Qualquer erro interrompe a execução. Credenciais: access key do usuário IAM da pipeline
+# (GitHub Secrets), pois a SCP da organização do curso bloqueia OIDC.
+#
+# Configuração do repositório (Settings > Secrets and variables > Actions):
+#   Variables: TF_STATE_BUCKET, AWS_REGION, SSH_ALLOWED_CIDR
+#   Secrets:   AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, SSH_PRIVATE_KEY, SSH_PUBLIC_KEY
+name: infra-deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "plan = só mostra as mudanças; apply = aplica Terraform e Ansible"
+        type: choice
+        options: [plan, apply]
+        default: plan
+      environment:
+        description: Ambiente de destino
+        type: choice
+        options: [dev, homolog, prod]
+        default: dev
+      instance_name:
+        description: Prefixo das VMs (<nome>-app e <nome>-db)
+        type: string
+        default: kubeshop
+      app_instance_type:
+        description: Tipo da VM da aplicação
+        type: string
+        default: t3.micro
+      db_instance_type:
+        description: Tipo da VM do MongoDB
+        type: string
+        default: t3.micro
+      docker_image:
+        description: Prefixo das imagens (vazio = ghcr.io/<owner>/kubeshop)
+        type: string
+        default: ""
+      docker_tag:
+        description: Versão das imagens (ex. 1.0.0)
+        type: string
+        default: "1.0.0"
+      update_os:
+        description: Aplicar atualizações do sistema operacional
+        type: boolean
+        default: false
+      extra_packages:
+        description: Pacotes adicionais separados por vírgula (ex. curl,git,htop)
+        type: string
+        default: ""
+      ssh_allowed_cidr:
+        description: CIDRs para SSH administrativo, separados por vírgula (vazio = variável SSH_ALLOWED_CIDR)
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+# Nunca duas execuções no mesmo ambiente ao mesmo tempo (o state também tem lock).
+concurrency:
+  group: infra-${{ inputs.environment }}
+  cancel-in-progress: false
+
+env:
+  TERRAFORM_VERSION: "1.17.0"
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-2' }}
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+
+jobs:
+  security:
+    name: Verificações de segurança
+    uses: ./.github/workflows/security.yml
+
+  terraform:
+    name: Terraform (${{ inputs.action }} · ${{ inputs.environment }})
+    needs: security
+    runs-on: ubuntu-24.04
+    environment: ${{ inputs.environment }}
+    permissions:
+      contents: read
+    outputs:
+      changes: ${{ steps.plan.outputs.changes }}
+    defaults:
+      run:
+        working-directory: infra
+    env:
+      IN_ENVIRONMENT: ${{ inputs.environment }}
+      IN_INSTANCE_NAME: ${{ inputs.instance_name }}
+      IN_APP_TYPE: ${{ inputs.app_instance_type }}
+      IN_DB_TYPE: ${{ inputs.db_instance_type }}
+      IN_SSH_CIDR: ${{ inputs.ssh_allowed_cidr || vars.SSH_ALLOWED_CIDR }}
+      SSH_PUBLIC_KEY: ${{ secrets.SSH_PUBLIC_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Valida parâmetros
+        run: |
+          set -euo pipefail
+          [[ "$IN_INSTANCE_NAME" =~ ^[a-z0-9-]{3,30}$ ]] || { echo "::error::instance_name inválido"; exit 1; }
+          for t in "$IN_APP_TYPE" "$IN_DB_TYPE"; do
+            [[ "$t" =~ ^[a-z][a-z0-9]*\.[a-z0-9]+$ ]] || { echo "::error::tipo de instância inválido: $t"; exit 1; }
+          done
+          [[ -n "$IN_SSH_CIDR" ]] || { echo "::error::informe ssh_allowed_cidr ou a variável SSH_ALLOWED_CIDR"; exit 1; }
+          [[ -n "$SSH_PUBLIC_KEY" ]] || { echo "::error::secret SSH_PUBLIC_KEY não configurado"; exit 1; }
+          [[ -n "${{ secrets.AWS_ACCESS_KEY_ID }}" && -n "${{ vars.TF_STATE_BUCKET }}" ]] \
+            || { echo "::error::secret AWS_ACCESS_KEY_ID e variável TF_STATE_BUCKET são obrigatórios"; exit 1; }
+
+      - name: Gera variáveis do Terraform a partir dos parâmetros
+        run: |
+          set -euo pipefail
+          jq -n \
+            --arg region "$AWS_REGION" \
+            --arg az "${AWS_REGION}a" \
+            --arg env "$IN_ENVIRONMENT" \
+            --arg name "$IN_INSTANCE_NAME" \
+            --arg app "$IN_APP_TYPE" \
+            --arg db "$IN_DB_TYPE" \
+            --arg cidrs "$IN_SSH_CIDR" \
+            --arg key "$SSH_PUBLIC_KEY" \
+            '{
+              region: $region, availability_zone: $az, environment: $env,
+              instance_name: $name, app_instance_type: $app, db_instance_type: $db,
+              ssh_allowed_cidrs: ($cidrs | split(",") | map(gsub("[[:space:]]"; "")) | map(select(length > 0))),
+              ssh_public_key: $key
+            }' > pipeline.auto.tfvars.json
+          # Mostra os valores sem a chave pública.
+          jq 'del(.ssh_public_key)' pipeline.auto.tfvars.json
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      - name: terraform init
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
+            -backend-config="key=kubeshop/${IN_ENVIRONMENT}/terraform.tfstate" \
+            -backend-config="region=${AWS_REGION}"
+
+      - name: terraform plan
+        id: plan
+        run: |
+          set +e
+          terraform plan -out=tfplan -detailed-exitcode -no-color | tee plan.txt
+          code=${PIPESTATUS[0]}
+          set -e
+          case "$code" in
+            0) echo "changes=false" >> "$GITHUB_OUTPUT" ;;
+            2) echo "changes=true"  >> "$GITHUB_OUTPUT" ;;
+            *) echo "::error::terraform plan falhou"; exit 1 ;;
+          esac
+          {
+            echo "## Terraform plan (${IN_ENVIRONMENT})"
+            echo '```'
+            grep -E '^\s+# |^Plan:|^No changes' plan.txt || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: terraform apply
+        if: inputs.action == 'apply' && steps.plan.outputs.changes == 'true'
+        run: terraform apply -no-color tfplan
+
+      - name: Exporta outputs para o Ansible
+        if: inputs.action == 'apply'
+        run: |
+          set -euo pipefail
+          terraform output -json > ../tf-outputs.json
+          jq -r 'to_entries[] | "\(.key) = \(.value.value)"' ../tf-outputs.json
+          {
+            echo "## Outputs"
+            echo '```'
+            jq -r 'to_entries[] | "\(.key) = \(.value.value)"' ../tf-outputs.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publica plano e outputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-${{ inputs.environment }}
+          path: |
+            infra/plan.txt
+            tf-outputs.json
+          if-no-files-found: ignore
+          retention-days: 30
+
+  ansible:
+    name: Ansible (configuração e deploy da aplicação)
+    needs: terraform
+    if: inputs.action == 'apply'
+    runs-on: ubuntu-24.04
+    environment: ${{ inputs.environment }}
+    permissions:
+      contents: read
+    env:
+      IN_DOCKER_IMAGE: ${{ inputs.docker_image || format('ghcr.io/{0}/kubeshop', github.repository_owner) }}
+      IN_DOCKER_TAG: ${{ inputs.docker_tag }}
+      IN_UPDATE_OS: ${{ inputs.update_os }}
+      IN_EXTRA_PACKAGES: ${{ inputs.extra_packages }}
+      ANSIBLE_FORCE_COLOR: "true"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Valida parâmetros da aplicação
+        run: |
+          set -euo pipefail
+          [[ "$IN_DOCKER_IMAGE" =~ ^[a-z0-9./_-]+$ ]] || { echo "::error::docker_image inválido"; exit 1; }
+          [[ "$IN_DOCKER_TAG" =~ ^[A-Za-z0-9._-]{1,64}$ ]] || { echo "::error::docker_tag inválido"; exit 1; }
+          [[ "$IN_EXTRA_PACKAGES" =~ ^[a-z0-9.+,\ -]*$ ]] || { echo "::error::extra_packages inválido"; exit 1; }
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: terraform-${{ inputs.environment }}
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Instala Ansible e coleções
+        working-directory: ansible
+        run: |
+          set -euo pipefail
+          pip install --quiet "ansible-core>=2.18,<2.20"
+          ansible-galaxy collection install -r requirements.yml
+
+      - name: Gera inventário a partir dos outputs do Terraform
+        run: bash ansible/inventory/gerar-inventario.sh tf-outputs.json "$AWS_REGION"
+
+      - name: Carrega a chave SSH do grupo no agente
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      # Só o bastion aceita SSH da internet, e apenas do CIDR do grupo. A pipeline
+      # abre no SG do bastion uma regra /32 para o IP deste runner e a remove ao
+      # final (mesmo em caso de erro). App e banco são alcançados através do
+      # bastion. A regra fica fora do Terraform: não gera diferença no próximo plan.
+      - name: Libera SSH temporário no bastion para o runner
+        id: sshrule
+        run: |
+          set -euo pipefail
+          RUNNER_IP="$(curl -sSf https://checkip.amazonaws.com | tr -d '[:space:]')"
+          SG_ID="$(jq -r .bastion_security_group_id.value tf-outputs.json)"
+          RULE_ID="$(aws ec2 authorize-security-group-ingress \
+            --group-id "$SG_ID" \
+            --ip-permissions "IpProtocol=tcp,FromPort=22,ToPort=22,IpRanges=[{CidrIp=${RUNNER_IP}/32,Description=pipeline-temporario-${GITHUB_RUN_ID}}]" \
+            --tag-specifications "ResourceType=security-group-rule,Tags=[{Key=temporario,Value=pipeline},{Key=run,Value=${GITHUB_RUN_ID}}]" \
+            --query 'SecurityGroupRules[0].SecurityGroupRuleId' --output text)"
+          echo "sg_id=$SG_ID" >> "$GITHUB_OUTPUT"
+          echo "rule_id=$RULE_ID" >> "$GITHUB_OUTPUT"
+          echo "Regra $RULE_ID criada para ${RUNNER_IP}/32"
+
+      - name: Executa o playbook
+        working-directory: ansible
+        run: |
+          set -euo pipefail
+          jq -n \
+            --arg image "$IN_DOCKER_IMAGE" \
+            --arg tag "$IN_DOCKER_TAG" \
+            --argjson update_os "$IN_UPDATE_OS" \
+            --arg pkgs "$IN_EXTRA_PACKAGES" \
+            '{docker_image: $image, docker_tag: $tag, update_os: $update_os, extra_packages: $pkgs}' \
+            > /tmp/pipeline-vars.json
+          cat /tmp/pipeline-vars.json
+          ansible-playbook playbook.yml -e @/tmp/pipeline-vars.json 2>&1 | tee ../ansible.log
+          grep -A5 'PLAY RECAP' ../ansible.log >> "$GITHUB_STEP_SUMMARY" || true
+
+      - name: Remove o SSH temporário
+        if: always() && steps.sshrule.outputs.rule_id != ''
+        run: |
+          aws ec2 revoke-security-group-ingress \
+            --group-id "${{ steps.sshrule.outputs.sg_id }}" \
+            --security-group-rule-ids "${{ steps.sshrule.outputs.rule_id }}"
+          echo "Regra ${{ steps.sshrule.outputs.rule_id }} removida"
+
+      - name: Verificação externa (pela internet)
+        run: |
+          set -euo pipefail
+          URL="$(jq -r .app_url.value tf-outputs.json)"
+          echo "HTTP -> HTTPS:"; curl -s -o /dev/null -w '%{http_code} %{redirect_url}\n' "http://${URL#https://}/"
+          echo "Readiness:";     curl -fsSk --retry 5 --retry-delay 5 --retry-all-errors "$URL/api/health/ready"; echo
+          VERSION="$(curl -fsSk "$URL/api/info" | jq -r .version)"
+          echo "Versão: $VERSION"
+          [[ "$VERSION" == "$IN_DOCKER_TAG" ]] || { echo "::error::versão $VERSION diferente de $IN_DOCKER_TAG"; exit 1; }
+          # Isolamento: a VM da aplicação não aceita SSH direto da internet (só via bastion).
+          APP_IP="$(jq -r .app_public_ip.value tf-outputs.json)"
+          if timeout 8 bash -c "exec 3<>/dev/tcp/${APP_IP}/22" 2>/dev/null; then
+            echo "::error::porta 22 da VM da aplicação acessível pela internet"; exit 1
+          fi
+          echo "SSH direto na VM da aplicação: bloqueado (esperado)"
+          {
+            echo "## Aplicação"
+            echo "- URL: $URL"
+            echo "- Versão em execução: \`$VERSION\`"
+            echo "- Bastion: \`ssh ubuntu@$(jq -r .bastion_public_ip.value tf-outputs.json)\`"
+            echo "- SSH direto na VM da aplicação: bloqueado"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publica log do Ansible
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ansible-${{ inputs.environment }}
+          path: ansible.log
+          if-no-files-found: ignore
+          retention-days: 30

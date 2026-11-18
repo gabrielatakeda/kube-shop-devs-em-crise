@@ -1,0 +1,47 @@
+# {{ ansible_managed }}
+# VM do banco: somente o MongoDB. Adaptado de compose.yaml do projeto.
+name: kubeshop-db
+
+services:
+  mongodb:
+    image: mongo:{{ mongo_tag }}
+    container_name: kubeshop-mongodb
+    command: [--bind_ip_all, --wiredTigerCacheSizeGB, "0.25"]
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD_FILE: /run/secrets/mongo_root_password
+      MONGO_INITDB_DATABASE: kubeshop
+      MONGO_APP_USERNAME: kubeshop
+      MONGO_APP_PASSWORD_FILE: /run/secrets/mongo_app_password
+    secrets: [mongo_root_password, mongo_app_password, mongo_backup_password]
+    # Publicado SOMENTE no IP privado da VM; o SG libera apenas a VM da aplicação.
+    ports:
+      - "{{ db_private_ip }}:27017:27017"
+    volumes:
+      - {{ mongo_data_mount }}/db:/data/db
+      - {{ mongo_data_mount }}/configdb:/data/configdb
+      - ./scripts/10-app-user.js:/docker-entrypoint-initdb.d/10-app-user.js:ro
+      - ./scripts/healthcheck.js:/opt/healthcheck.js:ro
+      - ./scripts/ensure-backup-user.js:/opt/scripts/ensure-backup-user.js:ro
+    restart: unless-stopped
+    security_opt: [no-new-privileges:true]
+    stop_grace_period: 30s
+    healthcheck:
+      test: [CMD, mongosh, --quiet, --file, /opt/healthcheck.js]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+secrets:
+  mongo_root_password:
+    file: ./secrets/mongo-root-password
+  mongo_app_password:
+    file: ./secrets/mongo-app-password
+  mongo_backup_password:
+    file: ./secrets/mongo-backup-password

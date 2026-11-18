@@ -1,0 +1,21 @@
+# Exemplo de valores. Copie para terraform.tfvars (ignorado pelo Git) para uso local.
+# Na pipeline, estes valores vêm dos parâmetros do workflow e dos GitHub Secrets.
+
+region              = "us-east-2"
+availability_zone   = "us-east-2a"
+environment         = "dev"
+instance_name       = "kubeshop"
+vpc_cidr            = "10.20.0.0/16"
+public_subnet_cidr  = "10.20.1.0/24"
+private_subnet_cidr = "10.20.11.0/24"
+
+app_instance_type = "t3.micro"
+db_instance_type  = "t3.micro"
+
+# IP público do grupo, ex.: "203.0.113.10/32". Nunca 0.0.0.0/0.
+ssh_allowed_cidrs = ["203.0.113.10/32"]
+
+# Conteúdo de ~/.ssh/chave-grupo.pub
+ssh_public_key = "ssh-ed25519 AAAA... grupo-kubeshop"
+
+backup_retention_days = 2

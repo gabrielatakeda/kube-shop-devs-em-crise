@@ -1,0 +1,4 @@
+---
+verify_expected_containers:
+  app: [kubeshop-proxy, kubeshop-frontend, kubeshop-api]
+  db: [kubeshop-mongodb]

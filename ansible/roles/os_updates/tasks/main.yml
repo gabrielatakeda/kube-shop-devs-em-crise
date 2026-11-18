@@ -1,0 +1,57 @@
+---
+# PM-04: verificar e aplicar atualizações do SO (parâmetro update_os) e manter
+# os pacotes necessários ao sistema (base + extra_packages).
+
+- name: Normaliza a lista de pacotes adicionais
+  ansible.builtin.set_fact:
+    os_updates_extra_packages: >-
+      {{ (extra_packages.split(',') if extra_packages is string else extra_packages)
+         | map('trim') | reject('equalto', '') | list }}
+
+- name: Atualiza o cache do apt (válido por 1 hora)
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+  changed_when: false
+
+- name: Instala pacotes base
+  ansible.builtin.apt:
+    name: "{{ os_updates_base_packages }}"
+    state: present
+
+- name: Instala pacotes adicionais solicitados na pipeline
+  ansible.builtin.apt:
+    name: "{{ os_updates_extra_packages }}"
+    state: present
+  when: os_updates_extra_packages | length > 0
+
+- name: Lista atualizações pendentes do SO
+  ansible.builtin.command: apt list --upgradable
+  register: os_updates_upgradable
+  changed_when: false
+
+- name: Mostra quantidade de atualizações pendentes
+  ansible.builtin.debug:
+    msg: >-
+      {{ os_updates_upgradable.stdout_lines | select('search', 'upgradable') | list | length }}
+      pacote(s) com atualização disponível; update_os={{ update_os | bool }}
+
+- name: Aplica atualizações do SO
+  ansible.builtin.apt:
+    upgrade: dist
+    autoremove: true
+  when: update_os | bool
+
+- name: Verifica se é necessário reiniciar
+  ansible.builtin.stat:
+    path: /var/run/reboot-required
+  register: os_updates_reboot_required
+
+- name: Reinicia a VM após atualização do kernel/bibliotecas
+  ansible.builtin.reboot:
+    msg: "Reinício solicitado pela pipeline após atualização do SO"
+    reboot_timeout: 600
+  when:
+    - update_os | bool
+    - reboot_if_required | bool
+    - os_updates_reboot_required.stat.exists

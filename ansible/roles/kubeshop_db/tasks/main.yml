@@ -1,0 +1,116 @@
+---
+# VM exclusiva do MongoDB (escopo REQ-01/02/05).
+# - Dados no volume EBS dedicado (sobrevive à troca de tipo/recriação da VM).
+# - Porta 27017 publicada apenas no IP privado; o SG só aceita a VM da aplicação.
+# - Senhas vindas do SSM Parameter Store, gravadas com permissão restrita (S4).
+
+- name: Caminho do volume EBS de dados (NVMe usa o ID do volume como serial)
+  ansible.builtin.set_fact:
+    kubeshop_db_device: "/dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_{{ db_data_volume_id | replace('-', '') }}"
+
+- name: Aguarda o volume de dados ser anexado
+  ansible.builtin.wait_for:
+    path: "{{ kubeshop_db_device }}"
+    timeout: 120
+
+- name: Cria sistema de arquivos no volume (somente se ainda não existir)
+  community.general.filesystem:
+    dev: "{{ kubeshop_db_device }}"
+    fstype: ext4
+    opts: -L mongo-data
+
+- name: Monta o volume de dados
+  ansible.posix.mount:
+    path: "{{ mongo_data_mount }}"
+    src: LABEL=mongo-data
+    fstype: ext4
+    opts: defaults,nofail,noatime
+    state: mounted
+
+- name: Diretórios de dados do MongoDB (UID do contêiner)
+  ansible.builtin.file:
+    path: "{{ mongo_data_mount }}/{{ item }}"
+    state: directory
+    owner: "{{ mongo_container_uid }}"
+    group: "{{ mongo_container_uid }}"
+    mode: "0700"
+  loop: [db, configdb]
+
+- name: Diretórios do projeto
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: "{{ kubeshop_root }}", mode: "0755" }
+    - { path: "{{ kubeshop_root }}/db", mode: "0750" }
+    - { path: "{{ kubeshop_root }}/db/scripts", mode: "0755" }
+    - { path: "{{ kubeshop_root }}/db/secrets", mode: "0700" }
+
+- name: Grava as senhas do MongoDB
+  ansible.builtin.copy:
+    dest: "{{ kubeshop_root }}/db/secrets/{{ item }}"
+    content: "{{ hostvars['localhost']['kubeshop_secrets'][item] }}\n"
+    owner: "{{ mongo_container_uid }}"
+    group: root
+    mode: "0400"
+  loop:
+    - mongo-root-password
+    - mongo-app-password
+    - mongo-backup-password
+  no_log: true
+  notify: Recria mongodb
+
+- name: Copia scripts de inicialização e saúde do projeto
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../docker/mongodb/{{ item.src }}"
+    dest: "{{ kubeshop_root }}/db/scripts/{{ item.dest }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - { src: init.js, dest: 10-app-user.js }
+    - { src: healthcheck.js, dest: healthcheck.js }
+
+- name: Copia script do usuário de backup
+  ansible.builtin.copy:
+    src: ensure-backup-user.js
+    dest: "{{ kubeshop_root }}/db/scripts/ensure-backup-user.js"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Gera o compose da VM do banco
+  ansible.builtin.template:
+    src: compose.yaml.j2
+    dest: "{{ kubeshop_root }}/db/compose.yaml"
+    owner: root
+    group: root
+    mode: "0640"
+
+- name: Sobe o MongoDB e aguarda o healthcheck
+  community.docker.docker_compose_v2:
+    project_src: "{{ kubeshop_root }}/db"
+    state: present
+    pull: missing
+    remove_orphans: true
+    wait: true
+    wait_timeout: 240
+
+- name: Aplica recriação pendente (troca de senha)
+  ansible.builtin.meta: flush_handlers
+
+- name: Garante o usuário de backup com papel mínimo (role 'backup')
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - kubeshop-mongodb
+      - mongosh
+      - --quiet
+      - --file
+      - /opt/scripts/ensure-backup-user.js
+  register: kubeshop_db_backup_user
+  changed_when: "'created' in kubeshop_db_backup_user.stdout"

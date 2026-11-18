@@ -1,0 +1,24 @@
+---
+- name: Recria api
+  community.docker.docker_compose_v2:
+    project_src: "{{ kubeshop_root }}/app"
+    services: [api]
+    state: present
+    recreate: always
+    wait: true
+    wait_timeout: 300
+
+# Remove versões anteriores da loja que não estão em uso (rollback baixa de novo do GHCR).
+- name: Remove imagens antigas
+  ansible.builtin.command: docker image prune -af --filter "label=org.opencontainers.image.source"
+  register: kubeshop_app_prune
+  changed_when: "'Total reclaimed space: 0B' not in kubeshop_app_prune.stdout"
+
+- name: Recria proxy
+  community.docker.docker_compose_v2:
+    project_src: "{{ kubeshop_root }}/app"
+    services: [proxy]
+    state: present
+    recreate: always
+    wait: true
+    wait_timeout: 120

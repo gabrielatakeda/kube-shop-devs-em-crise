@@ -1,0 +1,45 @@
+---
+# Rotinas de operação do KubeShop (escopo §9 "Manter e diagnosticar" e
+# "Proteger e recuperar"). Executado pela pipeline ops.yml:
+#   ansible-playbook ops.yml -e operation=health
+#   ansible-playbook ops.yml -e operation=logs -e service=api -e log_lines=300
+#   ansible-playbook ops.yml -e operation=restart -e service=api
+#   ansible-playbook ops.yml -e operation=backup
+#   ansible-playbook ops.yml -e operation=reset-demo
+# Não altera configuração: só consulta, reinicia serviços ou executa rotinas de dados.
+
+- name: Valida a operação solicitada
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Confere parâmetros
+      ansible.builtin.assert:
+        that:
+          - operation is defined
+          - operation in ops_operations
+          - service in ops_services
+          - (log_lines | int) > 0 and (log_lines | int) <= 5000
+        fail_msg: "operation deve ser um de {{ ops_operations }}; service um de {{ ops_services }}"
+        quiet: true
+
+    - name: Pastas locais de relatórios
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0755"
+      loop:
+        - "{{ ops_report_dir }}"
+        - "{{ ops_report_dir }}/logs"
+
+- name: Operação nas VMs de aplicação e banco (via bastion)
+  hosts: app:db
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Aguarda a VM aceitar SSH
+      ansible.builtin.wait_for_connection:
+        timeout: 120
+
+    - name: Executa a operação
+      ansible.builtin.include_tasks: "tasks/ops-{{ operation }}.yml"

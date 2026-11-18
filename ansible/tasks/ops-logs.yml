@@ -1,0 +1,51 @@
+---
+# Coleta as últimas linhas de log de cada contêiner (e do backup, na VM do banco)
+# e salva no runner, em reports/logs/, para virar artefato da pipeline.
+# Os logs da aplicação não contêm senhas (a API registra só método, rota e status).
+
+- name: Contêineres desta VM selecionados
+  ansible.builtin.set_fact:
+    ops_logs_targets: >-
+      {{ ops_service_map | dict2items
+         | selectattr('value.group', 'in', group_names)
+         | selectattr('key', 'in', ([service] if service != 'all' else ops_service_map.keys() | list))
+         | map(attribute='value.container') | list }}
+
+- name: Lê os logs dos contêineres
+  ansible.builtin.command:
+    argv: [docker, logs, --timestamps, --tail, "{{ log_lines | int }}", "{{ item }}"]
+  loop: "{{ ops_logs_targets }}"
+  register: ops_logs_docker
+  changed_when: false
+
+- name: Salva os logs no runner
+  ansible.builtin.copy:
+    dest: "{{ ops_report_dir }}/logs/{{ inventory_hostname }}-{{ item.item }}.log"
+    content: "{{ item.stdout }}\n{{ item.stderr }}\n"
+    mode: "0644"
+  loop: "{{ ops_logs_docker.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  delegate_to: localhost
+  become: false
+
+- name: Log do backup (VM do banco)
+  when: inventory_hostname in groups['db'] and service in ['all', 'mongodb']
+  block:
+    - name: Lê o log do backup
+      ansible.builtin.command: tail -n {{ log_lines | int }} /var/log/kubeshop-backup.log
+      register: ops_logs_backup
+      changed_when: false
+      failed_when: false
+
+    - name: Salva o log do backup no runner
+      ansible.builtin.copy:
+        dest: "{{ ops_report_dir }}/logs/{{ inventory_hostname }}-backup.log"
+        content: "{{ ops_logs_backup.stdout }}\n"
+        mode: "0644"
+      delegate_to: localhost
+      become: false
+
+- name: Arquivos gerados
+  ansible.builtin.debug:
+    msg: "{{ ops_logs_targets | map('regex_replace', '^', inventory_hostname ~ '-') | list }}"

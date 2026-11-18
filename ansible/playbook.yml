@@ -1,0 +1,103 @@
+---
+# KubeShop - configuração e manutenção das VMs (PM-04 3.3 / Entrega 2 R12, S1, S4, B6).
+# Executado pela pipeline infra-deploy.yml logo após o terraform apply:
+#   ansible-playbook playbook.yml -e docker_tag=1.0.1 -e update_os=true -e extra_packages=curl,git
+
+- name: Lê os segredos do SSM Parameter Store (no runner, com a credencial da pipeline)
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    # O localhost implícito não pertence aos grupos do inventário: lê as
+    # variáveis geradas pelo Terraform a partir da VM da aplicação.
+    secrets_prefix: "{{ hostvars[groups['app'][0]]['ssm_parameter_prefix'] }}"
+    secrets_region: "{{ hostvars[groups['app'][0]]['aws_region'] }}"
+  tasks:
+    - name: Busca as senhas do ambiente
+      ansible.builtin.command:
+        argv:
+          - aws
+          - ssm
+          - get-parameters-by-path
+          - --path
+          - "{{ secrets_prefix }}"
+          - --with-decryption
+          - --region
+          - "{{ secrets_region }}"
+          - --output
+          - json
+          - --query
+          - "Parameters[].{name: Name, value: Value}"
+      register: ssm_params
+      changed_when: false
+      no_log: true
+
+    - name: Organiza as senhas por nome
+      ansible.builtin.set_fact:
+        kubeshop_secrets: >-
+          {{ dict((ssm_params.stdout | from_json) | map(attribute='name') | map('basename')
+                  | zip((ssm_params.stdout | from_json) | map(attribute='value'))) }}
+      no_log: true
+
+    - name: Confere se todas as senhas existem
+      ansible.builtin.assert:
+        that: item in kubeshop_secrets
+        fail_msg: "Parâmetro {{ secrets_prefix }}/{{ item }} não encontrado no SSM"
+        quiet: true
+      loop: [mongo-root-password, mongo-app-password, mongo-backup-password]
+
+# O bastion vem primeiro, em um play próprio: app e banco são acessados através
+# dele, então ele precisa estar pronto (inclusive após um eventual reinício).
+- name: Base do sistema operacional - bastion
+  hosts: bastion
+  become: true
+  gather_facts: false
+  pre_tasks:
+    - name: Aguarda o bastion aceitar SSH
+      ansible.builtin.wait_for_connection:
+        timeout: 300
+
+    - name: Coleta fatos
+      ansible.builtin.setup:
+  roles:
+    - os_updates
+    - ssh_hardening
+
+# Uma VM por vez: um reinício após atualização do SO não derruba as duas juntas.
+- name: Base do sistema operacional - aplicação e banco (via bastion)
+  hosts: app:db
+  become: true
+  serial: 1
+  gather_facts: false
+  pre_tasks:
+    - name: Aguarda a VM aceitar SSH
+      ansible.builtin.wait_for_connection:
+        timeout: 300
+
+    - name: Coleta fatos
+      ansible.builtin.setup:
+  roles:
+    - os_updates
+    - ssh_hardening
+
+# O bastion não roda contêineres: Docker só nas VMs de aplicação e banco.
+- name: Docker
+  hosts: app:db
+  become: true
+  roles:
+    - docker
+
+- name: MongoDB e backup (VM privada)
+  hosts: db
+  become: true
+  roles:
+    - kubeshop_db
+    - backup
+    - verify
+
+- name: Aplicação (VM pública, SSH somente via bastion)
+  hosts: app
+  become: true
+  roles:
+    - kubeshop_app
+    - verify

@@ -1,0 +1,124 @@
+# CI/CD da aplicação: valida, constrói e publica imagens versionadas no GHCR.
+# - push/PR em main: testes + build + scan (sem publicar)
+# - tag vX.Y.Z: publica ghcr.io/<owner>/kubeshop-{api,frontend}:X.Y.Z e :sha-<commit>
+# A implantação na nuvem é feita pela infra-deploy.yml com o parâmetro docker_tag.
+# A versão exibida em /api/info vem da variável APP_VERSION, definida pelo Ansible
+# com o mesmo valor de docker_tag.
+name: app-ci
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*.*.*"]
+    paths-ignore: ["docs/**", "infra/**", "ansible/**", "bootstrap/**", "**.md"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: app-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ghcr.io/${{ github.repository_owner }}/kubeshop
+
+jobs:
+  test:
+    name: Testes
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.15.0"
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+      - name: Auditoria de dependências de produção
+        run: npm audit --omit=dev --audit-level=high
+
+  images:
+    name: Imagens (${{ matrix.component }})
+    needs: test
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: true
+      matrix:
+        component: [api, frontend]
+        include:
+          - component: api
+            dockerfile: apps/backend/Dockerfile
+          - component: frontend
+            dockerfile: apps/frontend/Dockerfile
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Define versão
+        id: version
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=0.0.0-sha.${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build local para scan
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          load: true
+          tags: ${{ env.IMAGE_PREFIX }}-${{ matrix.component }}:scan
+          cache-from: type=gha,scope=${{ matrix.component }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.component }}
+
+      - name: Trivy (vulnerabilidades da imagem)
+        uses: aquasecurity/trivy-action@0.33.1
+        with:
+          image-ref: ${{ env.IMAGE_PREFIX }}-${{ matrix.component }}:scan
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+
+      - name: Login no GHCR
+        if: steps.version.outputs.publish == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publica imagem versionada
+        if: steps.version.outputs.publish == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: true
+          tags: |
+            ${{ env.IMAGE_PREFIX }}-${{ matrix.component }}:${{ steps.version.outputs.version }}
+            ${{ env.IMAGE_PREFIX }}-${{ matrix.component }}:sha-${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.version=${{ steps.version.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.component }}
+
+      - name: Resumo
+        run: |
+          {
+            echo "### ${{ matrix.component }}"
+            echo "- versão: \`${{ steps.version.outputs.version }}\`"
+            echo "- publicada: ${{ steps.version.outputs.publish }}"
+          } >> "$GITHUB_STEP_SUMMARY"

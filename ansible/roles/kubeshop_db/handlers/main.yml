@@ -1,0 +1,9 @@
+---
+# Segredos montados como arquivo só são relidos quando o contêiner é recriado.
+- name: Recria mongodb
+  community.docker.docker_compose_v2:
+    project_src: "{{ kubeshop_root }}/db"
+    state: present
+    recreate: always
+    wait: true
+    wait_timeout: 240
