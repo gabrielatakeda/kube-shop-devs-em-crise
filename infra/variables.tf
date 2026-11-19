@@ -105,8 +105,8 @@ variable "db_instance_type" {
 
 variable "bastion_instance_type" {
   type        = string
-  description = "Tipo da VM bastion (apenas SSH; não roda aplicação)."
-  default     = "t3.nano"
+  description = "Tipo da VM bastion (apenas SSH). A conta está no plano Free Tier: só tipos elegíveis (t3.micro, t3.small, t4g.micro...)."
+  default     = "t3.micro"
 }
 
 variable "bastion_root_volume_size_gb" {

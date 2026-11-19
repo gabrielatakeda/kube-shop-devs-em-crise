@@ -25,7 +25,7 @@ VM-DB ──NAT──▶ S3 backup (diario/, 2 dias, SSE-KMS)
 ```
 
 - **VPC** `10.20.0.0/16` em `us-east-2a`: sub-rede pública (bastion, app, NAT) e privada (MongoDB).
-- **3 VMs:** bastion t3.nano (único SSH), aplicação t3.micro (proxy TLS + frontend + API), MongoDB t3.micro com disco EBS de dados dedicado.
+- **3 VMs:** bastion t3.micro (único SSH), aplicação t3.micro (proxy TLS + frontend + API), MongoDB t3.micro com disco EBS de dados dedicado.
 - **Segurança:** SSH só por chave via bastion; segredos no SSM (SecureString); CMK própria para discos, backup e segredos; a pipeline autentica com access key de um usuário IAM restrito (OIDC bloqueado pela SCP do curso); scans com Trivy, Checkov e Gitleaks.
 - Diagramas: [`docs/diagramas/`](docs/diagramas/). Decisões: [`docs/adr/`](docs/adr/).
 

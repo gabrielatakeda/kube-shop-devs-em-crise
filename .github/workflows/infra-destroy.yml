@@ -87,7 +87,7 @@ jobs:
                 --arg cidrs "${SSH_CIDR:-192.0.2.1/32}" --arg key "$SSH_PUBLIC_KEY" \
             '{region: $region, availability_zone: $az, environment: $env,
               ssh_allowed_cidrs: ($cidrs | split(",") | map(gsub("[[:space:]]"; "")) | map(select(length > 0))),
-              ssh_public_key: $key}' > pipeline.auto.tfvars.json
+              ssh_public_key: ($key | gsub("^[[:space:]]+|[[:space:]]+$"; ""))}' > pipeline.auto.tfvars.json
 
       - name: Inventário antes do destroy
         run: |

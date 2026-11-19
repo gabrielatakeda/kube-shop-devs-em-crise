@@ -23,7 +23,7 @@ O repositório não trazia pipeline de CI/CD (o escopo cita um CI existente do c
 |---|---|---|
 | Provedor | **AWS** | Provedor livre; Terraform maduro; integração com GitHub Actions; serviços gerenciados de NAT, KMS, SSM e S3; o grupo já tem a conta |
 | Região | **us-east-2 (Ohio)** | Preço menor que São Paulo para NAT, EC2 e IPv4; o público da demonstração não é sensível a latência de algumas dezenas de ms |
-| Servidores | **3 VMs**: bastion (t3.nano), aplicação (t3.micro), MongoDB (t3.micro) | REQ-01/02 pedem no mínimo 2 com banco exclusivo. O bastion é o recurso adicional, **justificado** pela separação do acesso administrativo (ADR do bastion) |
+| Servidores | **3 VMs**: bastion (t3.micro), aplicação (t3.micro), MongoDB (t3.micro) | REQ-01/02 pedem no mínimo 2 com banco exclusivo. O bastion é o recurso adicional, **justificado** pela separação do acesso administrativo (ADR do bastion) |
 | Rede | VPC com sub-rede pública (bastion, app, NAT) e privada (banco); NAT gerenciado | REQ-03: banco só pela rede privada; o banco sem IP público ainda baixa atualizações e envia backup |
 | Acessos | SG do banco aceita 27017 só da app; SSH só do bastion; bastion só dos CIDRs do grupo; SSH só por chave | REQ-02/04 |
 | Persistência | Disco EBS de dados dedicado ao MongoDB + backup diário no S3 + restore-test | REQ-05 e ACE-05/07: dados preservados em reinício, atualização e troca de tipo de instância |

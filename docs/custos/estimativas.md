@@ -5,6 +5,8 @@
 
 ## 0. Estimativa na AWS Pricing Calculator (arquitetura implantada)
 
+> **Atualizar (18/11):** o apply mostrou que a conta está no plano Free Tier e recusa t3.nano. O bastion passou a t3.micro (+US$ 3,79/mês). A estimativa salva abaixo ainda usa t3.nano: editar a linha do bastion na calculadora e gerar um novo link e PDF.
+
 | Serviço (calculadora) | Configuração | Mensal |
 |---|---|---|
 | Amazon EC2 | Bastion t3.nano, On-Demand 100%, EBS gp3 8 GB | US$ 4,44 |
@@ -40,7 +42,7 @@
 
 | Recurso | Quantidade | Custo mensal |
 |---|---|---|
-| Bastion t3.nano | 1 | US$ 3,80 |
+| Bastion t3.micro (t3.nano não é elegível no plano Free Tier da conta) | 1 | US$ 7,59 |
 | VM da aplicação t3.micro | 1 | US$ 7,59 |
 | VM do MongoDB t3.micro | 1 | US$ 7,59 |
 | NAT Gateway (hora) | 1 | US$ 32,85 |
@@ -49,7 +51,7 @@
 | EBS gp3 (8 bastion + 20 app + 20 banco + 10 dados) | 58 GB | US$ 4,64 |
 | KMS CMK | 1 | US$ 1,00 |
 | S3: backup mínimo + state | < 0,1 GB | ≈ US$ 0,00 |
-| **Total mensal** | | **≈ US$ 68,64** (calculadora: US$ 68,68, com as requisições do KMS) |
+| **Total mensal** | | **≈ US$ 72,43** (calculadora com bastion t3.nano: US$ 68,68; com t3.micro: ≈ US$ 72,47) |
 
 **O que mais pesa:** o NAT Gateway (48% do total) e os IPv4 públicos (16%). O bastion dedicado acrescenta cerca de US$ 7,45 (VM + IP), mais US$ 0,64 de disco.
 
