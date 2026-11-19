@@ -92,15 +92,9 @@ Também é preciso:
 
 ## 3. Publicar a aplicação
 
-O `app-ci` testa, constrói, passa o Trivy e publica as imagens quando uma tag `vX.Y.Z` é enviada:
+A cada push na `main`, o `app-ci` testa, constrói, passa o Trivy e publica as imagens `ghcr.io/<owner>/kubeshop-{api,frontend}` com a **versão do `package.json`** (ex.: `1.0.0`) e com `sha-<commit>`. Também pode ser disparado manualmente em Actions → app-ci → Run workflow.
 
-```bash
-git tag v1.0.0
-```
-
-```bash
-git push origin v1.0.0
-```
+Para lançar uma nova versão, altere o campo `"version"` do `package.json` e do `package-lock.json` (as duas primeiras ocorrências) e faça push. Tags Git **não** são usadas para publicar: a tag `entrega-2` marca apenas a versão final entregue.
 
 ## 4. Criar ou atualizar o ambiente (apply)
 

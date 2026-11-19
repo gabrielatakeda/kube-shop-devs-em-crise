@@ -1,6 +1,10 @@
 # CI/CD da aplicação: valida, constrói e publica imagens versionadas no GHCR.
-# - push/PR em main: testes + build + scan (sem publicar)
-# - tag vX.Y.Z: publica ghcr.io/<owner>/kubeshop-{api,frontend}:X.Y.Z e :sha-<commit>
+# - PR em main: testes + build + scan (sem publicar)
+# - push em main ou execução manual: testes + build + scan + publicação em
+#   ghcr.io/<owner>/kubeshop-{api,frontend}:<versão> e :sha-<commit>
+# A <versão> vem do campo "version" do package.json da raiz. Para lançar uma
+# nova versão (ex.: 1.0.1), altere o package.json e faça push. Tags Git não são
+# usadas aqui: a tag "entrega-2" marca só a versão final entregue.
 # A implantação na nuvem é feita pela infra-deploy.yml com o parâmetro docker_tag.
 # A versão exibida em /api/info vem da variável APP_VERSION, definida pelo Ansible
 # com o mesmo valor de docker_tag.
@@ -9,7 +13,6 @@ name: app-ci
 on:
   push:
     branches: [main]
-    tags: ["v*.*.*"]
     paths-ignore: ["docs/**", "infra/**", "ansible/**", "bootstrap/**", "**.md"]
   pull_request:
     branches: [main]
@@ -63,11 +66,13 @@ jobs:
         id: version
         run: |
           set -euo pipefail
-          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
-            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          VERSION="$(jq -r .version package.json)"
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::version inválida no package.json: $VERSION"; exit 1; }
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          # Publica em push na main e em execução manual; PR só valida.
+          if [[ "${GITHUB_EVENT_NAME}" != "pull_request" && "${GITHUB_REF}" == "refs/heads/main" ]]; then
             echo "publish=true" >> "$GITHUB_OUTPUT"
           else
-            echo "version=0.0.0-sha.${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
             echo "publish=false" >> "$GITHUB_OUTPUT"
           fi
 

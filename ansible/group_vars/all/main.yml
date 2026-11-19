@@ -3,7 +3,7 @@
 # ---------------------------------------------------------------- Parâmetros da PM-04
 # Prefixo das imagens: o Ansible usa <docker_image>-api e <docker_image>-frontend.
 docker_image: ghcr.io/gabrielatakeda/kubeshop
-# Versão publicada pelo app-ci.yml (tag Git vX.Y.Z -> imagem X.Y.Z).
+# Versão publicada pelo app-ci.yml (campo "version" do package.json -> imagem X.Y.Z).
 docker_tag: "1.0.0"
 mongo_tag: "8.0.17"
 # Aplicar atualizações do SO (apt dist-upgrade). Aceita true/false ou "true"/"false".

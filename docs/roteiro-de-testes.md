@@ -47,14 +47,26 @@ Evidência: artefatos `relatorios-iac` e `relatorio-gitleaks` → `docs/evidenci
 
 ## Etapa 3 — Publicar as versões da aplicação
 
+Sem tags Git: a cada push na `main` o `app-ci` publica as imagens com a versão do `package.json`.
+
+1. **Versão 1.0.0:** já é a versão atual do `package.json`. Basta o push na `main` (ou Actions → app-ci → Run workflow).
+2. **Versão 1.0.1** (para o cenário 2 e o rollback), depois que a 1.0.0 estiver publicada:
+
 ```bash
-git tag v1.0.0 && git push origin v1.0.0
-git tag v1.0.1 && git push origin v1.0.1      # mesma imagem, outra versão (para o cenário 2 e o rollback)
+sed -i '0,/"version": "1.0.0"/s//"version": "1.0.1"/' package.json
+```
+
+```bash
+sed -i '0,/"version": "1.0.0"/s//"version": "1.0.1"/; 0,/"version": "1.0.0"/s//"version": "1.0.1"/' package-lock.json
+```
+
+```bash
+git commit -am "Versão 1.0.1" && git push origin main
 ```
 
 | Esperado | Verificação |
 |---|---|
-| Duas execuções do `app-ci` publicando `kubeshop-api` e `kubeshop-frontend` | Perfil do GitHub → **Packages** |
+| Uma execução do `app-ci` por versão, publicando `kubeshop-api` e `kubeshop-frontend` (`1.0.0` e depois `1.0.1`) | Perfil do GitHub → **Packages** |
 | Pacotes **públicos** (Package settings → Change visibility) | `docker pull ghcr.io/gabrielatakeda/kubeshop-api:1.0.0` funciona sem login |
 
 ## Etapa 4 — Cenário 1: criação inicial
